@@ -2,3 +2,7 @@ pandas
 sqlalchemy
 psycopg2-binary
 streamlit
+fastapi
+uvicorn
+httpx
+python-dotenv

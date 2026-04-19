@@ -1,9 +1,12 @@
 import streamlit as st
 import pandas as pd
+from dotenv import load_dotenv
+import os
 from sqlalchemy import create_engine
 
-# 🔧 CHANGE THIS
-DB_URL = "postgresql://postgres:072a0385f6@localhost:5432/review2revenue_db"
+load_dotenv()
+
+DB_URL = os.getenv("DB_URL", "postgresql://postgres:postgres@localhost:5432/review2revenue_db")
 
 engine = create_engine(DB_URL)
 
