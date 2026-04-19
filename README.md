@@ -55,6 +55,31 @@ python scripts/load_to_db.py
 python scripts/compute_metrics.py
 ```
 
+### Use Supabase (Recommended For Team Collaboration)
+
+Yes, you can switch from local PostgreSQL to Supabase without changing backend code, because this project already uses `DB_URL` from environment variables.
+
+1. Create a Supabase project.
+2. In Supabase dashboard, open `Project Settings -> Database` and copy the connection string.
+3. Put it in local `.env` as `DB_URL` (use the pooler endpoint and SSL):
+
+```env
+DB_URL=postgresql://postgres.YOUR_PROJECT_REF:YOUR_DB_PASSWORD@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?sslmode=require
+```
+
+4. Ask each teammate to set their own local `.env` with the same `DB_URL`.
+5. Run scripts to load shared dataset once:
+
+```powershell
+python scripts/load_to_db.py
+python scripts/compute_metrics.py
+```
+
+Notes:
+- Keep `.env` private (already ignored by `.gitignore`).
+- Do not put real passwords or keys into `.env.example`.
+- If connection fails, verify SSL (`sslmode=require`) and your Supabase database password.
+
 ## 3) Environment Variables (Optional but Recommended)
 
 Use `.env.example` as reference:
