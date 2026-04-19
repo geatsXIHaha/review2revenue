@@ -1,6 +1,6 @@
 from sqlalchemy import create_engine, text
 
-DB_URL = "postgresql://postgres:072a0385f6@localhost:5432/review2revenue_db"
+DB_URL = "postgresql://postgres:pw@localhost:5432/review2revenue_db"
 
 engine = create_engine(DB_URL)
 
