@@ -11,6 +11,7 @@ from .repository import (
     search_restaurants_by_name,
 )
 from .schemas import AskRequest, AskResponse
+from .sentiment_model import get_sentiment_engine_status, predict_sentiment_summary
 from .zai_client import ZAIClient
 
 app = FastAPI(title="Review2Revenue API", version="1.0.0")
@@ -79,6 +80,11 @@ def search_restaurants(query: str = Query(min_length=1), limit: int = Query(defa
     except Exception:
         rows = []
     return {"restaurants": rows}
+
+
+@app.get("/api/sentiment/engine")
+def sentiment_engine() -> Dict[str, str]:
+    return {"engine": get_sentiment_engine_status()}
 
 
 @app.post("/api/ask", response_model=AskResponse)
@@ -150,6 +156,8 @@ def _handle_vendor(payload: AskRequest) -> AskResponse:
             "restaurant_name": payload.restaurant_name,
             "external_reviews": payload.external_reviews,
             "sentiment_summary": sentiment,
+            "sentiment_engine": get_sentiment_engine_status(),
+            "sentiment_confidence": sentiment.get("model_confidence", 0.0),
             "user_prompt": payload.prompt,
             "output_format": "strengths, weaknesses, prioritized actions, expected impact",
         }
@@ -213,6 +221,10 @@ def _rank_restaurants(prompt: str, restaurants: List[Dict], metrics_map: Dict[st
 
 
 def _simple_sentiment_summary(reviews: List[str]) -> Dict[str, float]:
+    model_summary = predict_sentiment_summary(reviews)
+    if model_summary is not None:
+        return model_summary
+
     positive_words = ["good", "great", "sedap", "best", "excellent", "friendly", "nice"]
     negative_words = ["bad", "slow", "mahal", "expensive", "dirty", "rude", "not good"]
 
@@ -229,4 +241,6 @@ def _simple_sentiment_summary(reviews: List[str]) -> Dict[str, float]:
     return {
         "positive_ratio": round(pos / total, 3),
         "negative_ratio": round(neg / total, 3),
+        "neutral_ratio": round(max(total - pos - neg, 0) / total, 3),
+        "model_confidence": 0.35,
     }

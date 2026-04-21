@@ -201,6 +201,43 @@ input:focus,
   padding: 0.9rem;
 }
 
+.meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin-top: 0.55rem;
+}
+
+.meta-pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #b9cbc4;
+  background: #f3f8f6;
+  color: #234338;
+  border-radius: 999px;
+  padding: 0.3rem 0.6rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.meta-pill--trained {
+  border-color: #8dc8a8;
+  background: #e8f7ef;
+  color: #1f5b3d;
+}
+
+.meta-pill--fallback {
+  border-color: #e0c089;
+  background: #fff5e4;
+  color: #6b4b1e;
+}
+
+.meta-pill--unknown {
+  border-color: #c9cfd6;
+  background: #f4f6f8;
+  color: #3d4b57;
+}
+
 .result p {
   margin: 0.45rem 0 0;
   white-space: pre-wrap;

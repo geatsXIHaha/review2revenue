@@ -26,6 +26,8 @@ function App() {
   const [isLoading, setIsLoading] = useState(false)
   const [result, setResult] = useState('')
   const [error, setError] = useState('')
+  const [responseMeta, setResponseMeta] = useState(null)
+  const [sentimentEngine, setSentimentEngine] = useState('unknown')
 
   const roleExamples = role === 'diner' ? dinerExamples : vendorExamples
 
@@ -70,10 +72,37 @@ function App() {
     return () => controller.abort()
   }, [role, restaurantName])
 
+  useEffect(() => {
+    const controller = new AbortController()
+
+    async function fetchSentimentEngine() {
+      try {
+        const response = await fetch(`${API_BASE}/api/sentiment/engine`, {
+          signal: controller.signal,
+        })
+        if (!response.ok) {
+          return
+        }
+        const data = await response.json()
+        if (data.engine) {
+          setSentimentEngine(data.engine)
+        }
+      } catch (fetchError) {
+        if (fetchError.name !== 'AbortError') {
+          setSentimentEngine('unknown')
+        }
+      }
+    }
+
+    fetchSentimentEngine()
+    return () => controller.abort()
+  }, [])
+
   async function handleSubmit(event) {
     event.preventDefault()
     setIsLoading(true)
     setError('')
+    setResponseMeta(null)
 
     const externalReviews = externalReviewsText
       .split('\n')
@@ -102,9 +131,14 @@ function App() {
 
       const data = await response.json()
       setResult(data.answer || 'No answer returned by backend.')
+      setResponseMeta({
+        source: data.source || 'unknown',
+        confidence: typeof data.confidence === 'number' ? data.confidence : null,
+      })
     } catch (submitError) {
       setError(submitError.message)
       setResult('')
+      setResponseMeta(null)
     } finally {
       setIsLoading(false)
     }
@@ -119,7 +153,27 @@ function App() {
     setShowRestaurantDropdown(false)
     setResult('')
     setError('')
+    setResponseMeta(null)
   }
+
+  const confidencePercent =
+    responseMeta && typeof responseMeta.confidence === 'number'
+      ? `${Math.round(responseMeta.confidence * 100)}%`
+      : null
+
+  const sentimentEngineLabel =
+    sentimentEngine === 'trained_model'
+      ? 'Trained Model'
+      : sentimentEngine === 'keyword_fallback'
+        ? 'Keyword Fallback'
+        : 'Unknown'
+
+  const sentimentEngineClass =
+    sentimentEngine === 'trained_model'
+      ? 'meta-pill meta-pill--trained'
+      : sentimentEngine === 'keyword_fallback'
+        ? 'meta-pill meta-pill--fallback'
+        : 'meta-pill meta-pill--unknown'
 
   return (
     <main className="page">
@@ -237,6 +291,11 @@ function App() {
 
         <section className="result" aria-live="polite">
           <h2>AI Output</h2>
+          <div className="meta-row">
+            <span className={sentimentEngineClass}>Sentiment Engine: {sentimentEngineLabel}</span>
+            {confidencePercent ? <span className="meta-pill">Analysis Confidence: {confidencePercent}</span> : null}
+            {responseMeta?.source ? <span className="meta-pill">Source: {responseMeta.source}</span> : null}
+          </div>
           {error ? <p className="error">{error}</p> : null}
           {!error && result ? <ReactMarkdown>{result}</ReactMarkdown> : <p>Submit a prompt to see the result.</p>}
         </section>

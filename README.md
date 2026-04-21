@@ -157,6 +157,104 @@ If you want the old dashboard:
 streamlit run app/app.py
 ```
 
+## 7) (Optional) Train Local Sentiment Model
+
+You can train a lightweight local sentiment classifier from `data/clean_reviews.csv`.
+
+From project root:
+
+```powershell
+python scripts/train_sentiment_model.py
+```
+
+What this does:
+- Trains a TF-IDF + Logistic Regression model on existing `sentiment` labels.
+- Saves artifact to `artifacts/sentiment_model.joblib`.
+- Prints basic evaluation metrics.
+
+Runtime behavior:
+- API automatically uses the trained model for vendor `external_reviews` sentiment summary when the artifact exists.
+- If artifact is missing, API falls back to keyword-based sentiment logic.
+- Check active mode via `GET /api/sentiment/engine` (returns `trained_model` or `keyword_fallback`).
+- Sentiment summary now includes `model_confidence` for transparency.
+
+## 8) (Optional) Generate Synthetic Restaurant Metadata
+
+You can generate synthetic metadata for each restaurant (menu, business hours, price tier, tags).
+
+Preview mode (recommended first):
+
+```powershell
+python scripts/enrich_restaurants_synthetic.py
+```
+
+This creates:
+- `data/clean_restaurants_enriched.csv`
+
+Overwrite main restaurants CSV directly:
+
+```powershell
+python scripts/enrich_restaurants_synthetic.py --in-place
+```
+
+Note:
+- Synthetic tags are now consistent with generated hours (`late-night` appears only when closing hour is late).
+
+After overwriting, reload database and recompute metrics:
+
+```powershell
+python scripts/load_to_db.py
+python scripts/compute_metrics.py
+```
+
+## 9) (Optional) Fetch Real Monday-Sunday Operating Hours (Google Places)
+
+If you want closer-to-real operating hours by day, use Google Places API enrichment.
+
+1. Add API key to `.env`:
+
+```env
+GOOGLE_PLACES_API_KEY=your_google_places_key
+```
+
+2. Run enrichment script:
+
+```powershell
+python scripts/enrich_restaurants_google_hours.py
+```
+
+Output:
+- `data/clean_restaurants_google_hours.csv`
+
+Useful options:
+
+```powershell
+# Test first 20 rows
+python scripts/enrich_restaurants_google_hours.py --limit 20
+
+# Change region hint for better matching
+python scripts/enrich_restaurants_google_hours.py --region "Petaling Jaya, Malaysia"
+```
+
+Added columns include:
+- `operating_hours_monday` ... `operating_hours_sunday`
+- `operating_hours_by_day_json`
+- `google_place_id`, `google_matched_name`, `google_formatted_address`, `google_business_status`
+- `google_price_level`, `google_price_tier`
+- `google_lat`, `google_lng`
+- `google_website`, `google_phone`
+- `google_types_json`
+- `google_search_query`, `operating_hours_source`
+
+Notes for best quality:
+- Start with `--limit 20` to inspect matching quality before full run.
+- Tune `--region` to your target area to reduce wrong place matches.
+- `operating_hours_source` values:
+	- `google_places` = successful lookup
+	- `not_found` = no place match found
+	- `error` = request/parsing issue
+- Places data can change over time and may not always be complete for every restaurant.
+
 ## API Notes
 
 ### `POST /api/ask`
