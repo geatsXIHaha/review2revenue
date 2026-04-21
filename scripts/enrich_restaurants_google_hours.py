@@ -333,7 +333,7 @@ def main() -> None:
         description="Enrich restaurant CSV with Mon-Sun operating hours from Google Places API."
     )
     parser.add_argument("--input",  type=Path,  default=Path("data/clean_restaurants.csv"))
-    parser.add_argument("--output", type=Path,  default=Path("data/clean_restaurants_google_hours.csv"))
+    parser.add_argument("--output", type=Path,  default=Path("data/restaurants_google_hours.csv"))
     parser.add_argument("--region", type=str,   default="Petaling Jaya, Malaysia")
     parser.add_argument("--delay",  type=float, default=0.08)
     parser.add_argument("--limit",  type=int,   default=0, help="0 = all rows")
