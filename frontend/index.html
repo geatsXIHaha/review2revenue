@@ -4,10 +4,200 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
+    <title>Review2Revenue</title>
+    
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Baloo+2:wght@400;700;800&family=Nunito:wght@400;600&display=swap');
+     
+      :root {
+        --cream: #FFF8F0;
+        --peach: #FFD6A5;
+        --coral: #FF6B6B;
+        --mint: #B5EAD7;
+        --yellow: #FFEAA7;
+        --pink: #FFB7C5;
+        --purple: #C9B1FF;
+        --sky: #A8E6CF;
+      }
+     
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+     
+      html, body {
+        width: 100%;
+        height: 100%;
+      }
+     
+      body {
+        min-height: 100vh;
+        background: var(--cream);
+        font-family: 'Baloo 2', cursive;
+        overflow-x: hidden;
+        position: relative;
+      }
+     
+      /* Soft gradient base */
+      body::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        background:
+          radial-gradient(ellipse at 15% 20%, #FFE0EC 0%, transparent 45%),
+          radial-gradient(ellipse at 85% 15%, #FFF4C2 0%, transparent 45%),
+          radial-gradient(ellipse at 50% 80%, #D4F5E9 0%, transparent 50%),
+          radial-gradient(ellipse at 80% 70%, #E8D8FF 0%, transparent 40%),
+          var(--cream);
+        z-index: 0;
+        pointer-events: none;
+      }
+     
+      /* Floating food container */
+      #food-scene {
+        position: fixed;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+      }
+     
+      .food-item {
+        position: absolute;
+        font-size: 2.2rem;
+        animation: floatFood linear infinite;
+        opacity: 0;
+        filter: drop-shadow(0 4px 8px rgba(0,0,0,0.08));
+        user-select: none;
+      }
+     
+      @keyframes floatFood {
+        0%   { transform: translateY(110vh) rotate(0deg) scale(0.7); opacity: 0; }
+        5%   { opacity: 0.9; }
+        90%  { opacity: 0.9; }
+        100% { transform: translateY(-15vh) rotate(360deg) scale(1.1); opacity: 0; }
+      }
+     
+      /* Bouncing sparkles */
+      .sparkle {
+        position: absolute;
+        width: 8px; height: 8px;
+        border-radius: 50%;
+        animation: sparkleAnim ease-in-out infinite;
+        opacity: 0;
+      }
+     
+      @keyframes sparkleAnim {
+        0%, 100% { transform: scale(0); opacity: 0; }
+        50%       { transform: scale(1.4); opacity: 1; }
+      }
+     
+      /* Wavy stripe ribbon at bottom */
+      .ribbon {
+        position: fixed;
+        bottom: 0; left: 0; right: 0;
+        height: 90px;
+        z-index: 1;
+        overflow: hidden;
+        pointer-events: none;
+      }
+     
+      .ribbon svg { width: 100%; height: 100%; }
+     
+      /* Orbit rings */
+      .orbit-ring {
+        position: fixed;
+        border-radius: 50%;
+        border: 2px dashed rgba(255,150,100,0.25);
+        animation: spinRing linear infinite;
+        pointer-events: none;
+        z-index: 5;
+      }
+     
+      @keyframes spinRing { to { transform: rotate(360deg); } }
+     
+      .orbit-dot {
+        position: absolute;
+        width: 14px; height: 14px;
+        border-radius: 50%;
+        top: -7px; left: calc(50% - 7px);
+        font-size: 1.1rem;
+        display: flex; align-items: center; justify-content: center;
+      }
+
+      /* React root container */
+      #root {
+        position: relative;
+        z-index: 10;
+        width: 100%;
+        min-height: 100vh;
+      }
+    </style>
   </head>
   <body>
+    <!-- Floating food layer -->
+    <div id="food-scene"></div>
+
+    <!-- Orbit rings around content -->
+    <div class="orbit-ring" id="ring1" style="width:420px;height:420px;top:calc(50% - 210px);left:calc(50% - 210px);animation-duration:18s;">
+      <span class="orbit-dot">🍓</span>
+    </div>
+    <div class="orbit-ring" id="ring2" style="width:560px;height:560px;top:calc(50% - 280px);left:calc(50% - 280px);animation-duration:26s;animation-direction:reverse;border-color:rgba(150,100,255,0.18);">
+      <span class="orbit-dot">🍋</span>
+    </div>
+
+    <!-- React app mounts here -->
     <div id="root"></div>
+
+    <!-- Bottom ribbon -->
+    <div class="ribbon">
+      <svg viewBox="0 0 1440 90" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M0,40 C240,90 480,0 720,40 C960,80 1200,10 1440,40 L1440,90 L0,90 Z" fill="#FFD6A5" opacity="0.5"/>
+        <path d="M0,55 C200,10 440,80 720,50 C1000,20 1240,70 1440,45 L1440,90 L0,90 Z" fill="#FFB7C5" opacity="0.45"/>
+      </svg>
+    </div>
+
+    <script>
+      const foods = ['🍕','🍣','🍜','🧁','🍩','🍓','🥑','🍊','🥐','🍦','🧇','🥞','🍔','🌮','🍇','🍰','🥧','🍿','🫐','🍭','🥨','🍱','🧆','🫕','🍤'];
+      const colors = ['#FF6B6B','#FFB347','#87CEEB','#98FB98','#DDA0DD','#F0E68C','#FF69B4','#40E0D0'];
+     
+      const scene = document.getElementById('food-scene');
+     
+      function spawnFood() {
+        const el = document.createElement('div');
+        el.className = 'food-item';
+        el.textContent = foods[Math.floor(Math.random() * foods.length)];
+        const size = 1.4 + Math.random() * 1.8;
+        el.style.cssText = `
+          left: ${Math.random() * 95}%;
+          font-size: ${size}rem;
+          animation-duration: ${7 + Math.random() * 10}s;
+          animation-delay: ${Math.random() * 2}s;
+        `;
+        scene.appendChild(el);
+        setTimeout(() => el.remove(), 20000);
+      }
+     
+      function spawnSparkle() {
+        const el = document.createElement('div');
+        el.className = 'sparkle';
+        el.style.cssText = `
+          left: ${Math.random() * 100}%;
+          top: ${Math.random() * 100}%;
+          background: ${colors[Math.floor(Math.random() * colors.length)]};
+          width: ${5 + Math.random() * 10}px;
+          height: ${5 + Math.random() * 10}px;
+          animation-duration: ${1.5 + Math.random() * 2}s;
+          animation-delay: ${Math.random() * 1.5}s;
+        `;
+        scene.appendChild(el);
+        setTimeout(() => el.remove(), 5000);
+      }
+     
+      // Initial burst
+      for (let i = 0; i < 18; i++) spawnFood();
+      for (let i = 0; i < 25; i++) spawnSparkle();
+     
+      setInterval(spawnFood, 900);
+      setInterval(spawnSparkle, 350);
+    </script>
+
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

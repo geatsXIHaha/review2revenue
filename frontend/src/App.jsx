@@ -179,7 +179,7 @@ function App() {
     <main className="page">
       <header className="hero">
         <p className="eyebrow">Review2Revenue</p>
-        <h1>AI Restaurant Decision System</h1>
+        <h1>AI Restaurant Decision System 🍜</h1>
         <p className="subtext">
           React frontend with Python backend, PostgreSQL data, and Z.AI reasoning.
         </p>
