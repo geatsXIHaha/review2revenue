@@ -35,16 +35,14 @@
         position: relative;
       }
      
-      /* Soft gradient base */
+      /* Soft gradient base - SIMPLIFIED for performance */
       body::before {
         content: '';
         position: fixed;
         inset: 0;
         background:
-          radial-gradient(ellipse at 15% 20%, #FFE0EC 0%, transparent 45%),
-          radial-gradient(ellipse at 85% 15%, #FFF4C2 0%, transparent 45%),
-          radial-gradient(ellipse at 50% 80%, #D4F5E9 0%, transparent 50%),
-          radial-gradient(ellipse at 80% 70%, #E8D8FF 0%, transparent 40%),
+          radial-gradient(ellipse at 20% 30%, rgba(255, 224, 236, 0.4) 0%, transparent 50%),
+          radial-gradient(ellipse at 80% 20%, rgba(255, 244, 194, 0.3) 0%, transparent 50%),
           var(--cream);
         z-index: 0;
         pointer-events: none;
@@ -63,29 +61,30 @@
         font-size: 2.2rem;
         animation: floatFood linear infinite;
         opacity: 0;
-        filter: drop-shadow(0 4px 8px rgba(0,0,0,0.08));
         user-select: none;
+        will-change: transform, opacity;
       }
      
       @keyframes floatFood {
-        0%   { transform: translateY(110vh) rotate(0deg) scale(0.7); opacity: 0; }
-        5%   { opacity: 0.9; }
-        90%  { opacity: 0.9; }
-        100% { transform: translateY(-15vh) rotate(360deg) scale(1.1); opacity: 0; }
+        0%   { transform: translateY(110vh) scale(0.7); opacity: 0; }
+        5%   { opacity: 0.85; }
+        90%  { opacity: 0.85; }
+        100% { transform: translateY(-15vh) scale(1.1); opacity: 0; }
       }
      
       /* Bouncing sparkles */
       .sparkle {
         position: absolute;
-        width: 8px; height: 8px;
+        width: 6px; height: 6px;
         border-radius: 50%;
         animation: sparkleAnim ease-in-out infinite;
         opacity: 0;
+        will-change: opacity, transform;
       }
      
       @keyframes sparkleAnim {
         0%, 100% { transform: scale(0); opacity: 0; }
-        50%       { transform: scale(1.4); opacity: 1; }
+        50%       { transform: scale(1); opacity: 0.8; }
       }
      
       /* Wavy stripe ribbon at bottom */
@@ -100,17 +99,10 @@
      
       .ribbon svg { width: 100%; height: 100%; }
      
-      /* Orbit rings */
+      /* Orbit rings - DISABLED for performance */
       .orbit-ring {
-        position: fixed;
-        border-radius: 50%;
-        border: 2px dashed rgba(255,150,100,0.25);
-        animation: spinRing linear infinite;
-        pointer-events: none;
-        z-index: 5;
+        display: none;
       }
-     
-      @keyframes spinRing { to { transform: rotate(360deg); } }
      
       .orbit-dot {
         position: absolute;
@@ -190,12 +182,13 @@
         setTimeout(() => el.remove(), 5000);
       }
      
-      // Initial burst
-      for (let i = 0; i < 18; i++) spawnFood();
-      for (let i = 0; i < 25; i++) spawnSparkle();
+      // Initial burst - REDUCED for performance
+      for (let i = 0; i < 8; i++) spawnFood();
+      for (let i = 0; i < 10; i++) spawnSparkle();
      
-      setInterval(spawnFood, 900);
-      setInterval(spawnSparkle, 350);
+      // Spawn new items less frequently
+      setInterval(spawnFood, 1500);
+      setInterval(spawnSparkle, 1000);
     </script>
 
     <script type="module" src="/src/main.jsx"></script>

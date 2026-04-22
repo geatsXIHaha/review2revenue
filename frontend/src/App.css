@@ -9,14 +9,12 @@
 }
 
 .hero {
-  background: rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border: 2px solid rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.92);
+  border: 2px solid rgba(255, 200, 150, 0.3);
   color: #A0756A;
   border-radius: 20px;
   padding: 2rem 1.5rem;
-  box-shadow: 0 8px 32px rgba(255, 107, 107, 0.12), 0 2px 8px rgba(0,0,0,0.06);
+  box-shadow: 0 4px 12px rgba(255, 107, 107, 0.08);
 }
 
 .eyebrow {
@@ -48,15 +46,13 @@
 }
 
 .panel {
-  background: rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border: 2px solid rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.92);
+  border: 2px solid rgba(255, 200, 150, 0.3);
   border-radius: 20px;
   padding: 1.75rem;
   display: grid;
   gap: 1.2rem;
-  box-shadow: 0 8px 32px rgba(255, 107, 107, 0.12), 0 2px 8px rgba(0,0,0,0.06);
+  box-shadow: 0 4px 12px rgba(255, 107, 107, 0.08);
 }
 
 .role-tabs {
@@ -82,7 +78,7 @@
   background: linear-gradient(135deg, #FF6B6B 0%, #FF8E53 100%);
   color: #ffffff;
   border-color: #FF6B6B;
-  box-shadow: 0 4px 12px rgba(255, 107, 107, 0.25);
+  box-shadow: 0 2px 8px rgba(255, 107, 107, 0.15);
 }
 
 .form-grid {
@@ -121,9 +117,9 @@
   margin: 0;
   padding: 0.35rem;
   border: 1px solid rgba(255, 200, 150, 0.5);
-  background: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.95);
   border-radius: 10px;
-  box-shadow: 0 4px 12px rgba(255, 107, 107, 0.12);
+  box-shadow: 0 2px 8px rgba(255, 107, 107, 0.08);
   max-height: 220px;
   overflow-y: auto;
 }
@@ -162,7 +158,7 @@ input {
   border-radius: 10px;
   padding: 0.85rem;
   font: inherit;
-  background: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.9);
   color: #A0756A;
   font-size: clamp(0.9rem, 2vw, 1rem);
   min-height: 44px;
@@ -191,14 +187,14 @@ input:focus,
   cursor: pointer;
   font-weight: 700;
   transition: all 0.3s ease;
-  box-shadow: 0 4px 12px rgba(255, 107, 107, 0.25);
+  box-shadow: 0 2px 8px rgba(255, 107, 107, 0.2);
   font-size: clamp(0.9rem, 2vw, 1rem);
   white-space: nowrap;
 }
 
 .primary:hover:not(:disabled) {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(255, 107, 107, 0.35);
+  box-shadow: 0 4px 12px rgba(255, 107, 107, 0.25);
 }
 
 .primary:disabled {
@@ -244,7 +240,7 @@ input:focus,
 
 .result {
   border: 1px solid rgba(255, 200, 150, 0.5);
-  background: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.88);
   border-radius: 12px;
   padding: 1.1rem;
 }
