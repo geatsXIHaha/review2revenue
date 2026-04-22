@@ -24,17 +24,21 @@ def _load_restaurants_from_csv() -> List[Dict]:
         return []
 
     df = pd.read_csv(csv_path)
-    required = ["store_id", "name", "food_type", "avg_rating", "review_count"]
+    required = ["store_id", "name", "food_type", "avg_rating"]
     for col in required:
         if col not in df.columns:
             return []
-    return df[required].to_dict(orient="records")
+
+    if "review_count" not in df.columns:
+        df["review_count"] = 0
+
+    return df[["store_id", "name", "food_type", "avg_rating", "review_count"]].to_dict(orient="records")
 
 
 def find_restaurant_by_name(name: str) -> Optional[Dict]:
     query = text(
         """
-        SELECT store_id, name, food_type, avg_rating, review_count
+        SELECT store_id, name, food_type, avg_rating, COALESCE(review_count, 0) AS review_count
         FROM restaurants
         WHERE LOWER(name) LIKE LOWER(:name)
         ORDER BY avg_rating DESC
@@ -56,7 +60,7 @@ def find_restaurant_by_name(name: str) -> Optional[Dict]:
 def list_restaurants(limit: int = 40) -> List[Dict]:
     query = text(
         """
-        SELECT store_id, name, food_type, avg_rating, review_count
+        SELECT store_id, name, food_type, avg_rating, COALESCE(review_count, 0) AS review_count
         FROM restaurants
         ORDER BY avg_rating DESC NULLS LAST
         LIMIT :limit
@@ -75,7 +79,7 @@ def list_restaurants(limit: int = 40) -> List[Dict]:
 def search_restaurants_by_name(query_text: str, limit: int = 8) -> List[Dict]:
     query = text(
         """
-        SELECT store_id, name, food_type, avg_rating, review_count
+        SELECT store_id, name, food_type, avg_rating, COALESCE(review_count, 0) AS review_count
         FROM restaurants
         WHERE LOWER(name) LIKE LOWER(:query)
         ORDER BY avg_rating DESC NULLS LAST, name ASC
@@ -99,6 +103,13 @@ def search_restaurants_by_name(query_text: str, limit: int = 8) -> List[Dict]:
             return []
 
         mask = df["name"].astype(str).str.lower().str.contains(query_text.lower(), na=False)
+        if "food_type" not in df.columns:
+            df["food_type"] = None
+        if "avg_rating" not in df.columns:
+            df["avg_rating"] = None
+        if "review_count" not in df.columns:
+            df["review_count"] = 0
+
         filtered = df.loc[mask, ["store_id", "name", "food_type", "avg_rating", "review_count"]].head(limit)
         return filtered.to_dict(orient="records")
 
