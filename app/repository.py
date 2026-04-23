@@ -168,6 +168,28 @@ def find_restaurant_by_name(name: str) -> Optional[Dict]:
         return None
 
 
+def find_restaurant_by_store_id(store_id: str) -> Optional[Dict]:
+    """Find a restaurant by its store_id"""
+    query = text(
+        """
+        SELECT store_id, name, food_type, avg_rating, COALESCE(review_count, 0) AS review_count
+        FROM restaurants
+        WHERE store_id = :store_id
+        LIMIT 1
+        """
+    )
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(query, {"store_id": store_id}).mappings().first()
+        return dict(row) if row else None
+    except Exception:
+        # Fallback to CSV
+        for row in _load_restaurants_from_csv():
+            if row.get("store_id") == store_id:
+                return row
+        return None
+
+
 def list_restaurants(limit: int = 40) -> List[Dict]:
     query = text(
         """

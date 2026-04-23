@@ -16,9 +16,10 @@ const vendorExamples = [
   'Why is our rating lower than competitors?',
 ]
 
-function App() {
-  const [role, setRole] = useState('diner')
-  const [prompt, setPrompt] = useState(dinerExamples[0])
+function App({ userProfile }) {
+  const registeredRole = userProfile?.role || 'diner'
+  const [role, setRole] = useState(registeredRole)
+  const [prompt, setPrompt] = useState('')
   const [restaurantName, setRestaurantName] = useState('')
   const [externalReviewsText, setExternalReviewsText] = useState('')
   const [restaurantOptions, setRestaurantOptions] = useState([])
@@ -28,11 +29,55 @@ function App() {
   const [error, setError] = useState('')
   const [responseMeta, setResponseMeta] = useState(null)
   const [sentimentEngine, setSentimentEngine] = useState('unknown')
+  const [vendorRestaurant, setVendorRestaurant] = useState(null)
+
+  // Sync role with registeredRole whenever it changes
+  useEffect(() => {
+    setRole(registeredRole)
+    // Also update prompt when role changes
+    setPrompt(registeredRole === 'vendor' ? vendorExamples[0] : dinerExamples[0])
+  }, [registeredRole])
+
+  // Fetch vendor's restaurant info if they're a vendor
+  useEffect(() => {
+    if (registeredRole === 'vendor' && userProfile?.store_id) {
+      async function fetchVendorRestaurant() {
+        try {
+          // Fetch the restaurant directly by store_id
+          const response = await fetch(
+            `${API_BASE}/api/restaurants/by-store-id?store_id=${userProfile.store_id}`,
+          )
+          if (response.ok) {
+            const data = await response.json()
+            const restaurant = data.restaurant
+            setVendorRestaurant({
+              store_id: restaurant.store_id,
+              name: restaurant.name,
+            })
+            setRestaurantName(restaurant.name)
+          } else {
+            throw new Error('Restaurant not found')
+          }
+        } catch (err) {
+          console.error('Error fetching vendor restaurant:', err)
+          // Fallback: set placeholder
+          const fallbackName = `Restaurant ${userProfile.store_id}`
+          setVendorRestaurant({
+            store_id: userProfile.store_id,
+            name: fallbackName,
+          })
+          setRestaurantName(fallbackName)
+        }
+      }
+      fetchVendorRestaurant()
+    }
+  }, [registeredRole, userProfile?.store_id])
 
   const roleExamples = role === 'diner' ? dinerExamples : vendorExamples
 
+  // Fetch restaurant options for DINER only
   useEffect(() => {
-    if (role !== 'vendor') {
+    if (role !== 'diner') {
       setRestaurantOptions([])
       setShowRestaurantDropdown(false)
       return
@@ -119,7 +164,10 @@ function App() {
       role,
       prompt,
       restaurant_name: restaurantName,
-      external_reviews: role === 'vendor' && externalReviews.length > 0 ? externalReviews : undefined,
+      // For vendors, include store_id so backend can fetch correct restaurant data
+      ...(role === 'vendor' && userProfile?.store_id && { store_id: userProfile.store_id }),
+      // Include external reviews if provided
+      external_reviews: externalReviews.length > 0 ? externalReviews : undefined,
     }
 
     try {
@@ -151,15 +199,8 @@ function App() {
   }
 
   function handleRoleChange(nextRole) {
-    setRole(nextRole)
-    setPrompt(nextRole === 'diner' ? dinerExamples[0] : vendorExamples[0])
-    setRestaurantName('')
-    setExternalReviewsText('')
-    setRestaurantOptions([])
-    setShowRestaurantDropdown(false)
-    setResult('')
-    setError('')
-    setResponseMeta(null)
+    // Role is locked after registration - cannot be changed
+    return
   }
 
   const confidencePercent =
@@ -184,8 +225,25 @@ function App() {
   return (
     <main className="page">
       <header className="hero">
-        <p className="eyebrow">Review2Revenue</p>
-        <h1>AI Restaurant Decision System</h1>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+          <div>
+            <p className="eyebrow">Review2Revenue</p>
+            <h1>AI Restaurant Decision System 🍜</h1>
+          </div>
+          <div style={{
+            background: role === 'diner' ? 'rgba(100, 200, 150, 0.15)' : 'rgba(255, 150, 100, 0.15)',
+            border: `2px solid ${role === 'diner' ? 'rgba(100, 200, 150, 0.3)' : 'rgba(255, 150, 100, 0.3)'}`,
+            borderRadius: '8px',
+            padding: '12px 20px',
+            textAlign: 'center',
+            minWidth: '150px',
+          }}>
+            <p style={{ fontSize: '0.85rem', color: '#666', margin: '0 0 4px 0' }}>Your Role</p>
+            <p style={{ fontSize: '1.1rem', fontWeight: '600', color: '#333', margin: '0' }}>
+              {role === 'diner' ? '🍴 Diner' : '🏪 Vendor'}
+            </p>
+          </div>
+        </div>
         <p className="subtext">
           React frontend with Python backend, PostgreSQL data, and Z.AI reasoning.
         </p>
@@ -203,90 +261,130 @@ function App() {
       </header>
 
       <section className="panel">
-        <div className="role-tabs" role="tablist" aria-label="Choose role">
-          <button
-            type="button"
-            className={role === 'diner' ? 'tab active' : 'tab'}
-            onClick={() => handleRoleChange('diner')}
-          >
-            User View
-          </button>
-          <button
-            type="button"
-            className={role === 'vendor' ? 'tab active' : 'tab'}
-            onClick={() => handleRoleChange('vendor')}
-          >
-            Vendor View
-          </button>
-        </div>
-
         <form onSubmit={handleSubmit} className="form-grid">
-          <label className="field">
-            <span>Prompt</span>
-            <textarea
-              rows={4}
-              value={prompt}
-              onChange={(event) => setPrompt(event.target.value)}
-              placeholder="Ask your restaurant question..."
-              required
-            />
-          </label>
+          {/* DINER VIEW */}
+          {role === 'diner' && (
+            <>
+              <label className="field">
+                <span>Prompt</span>
+                <textarea
+                  rows={4}
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  placeholder="Ask your restaurant question..."
+                  required
+                />
+              </label>
 
-          <label className="field">
-            <span>Restaurant Name (optional for user, useful for vendor)</span>
-            <div className="restaurant-search-wrap">
-              <input
-                type="text"
-                value={restaurantName}
-                onChange={(event) => setRestaurantName(event.target.value)}
-                onFocus={() => setShowRestaurantDropdown(restaurantOptions.length > 0)}
-                onBlur={() => setTimeout(() => setShowRestaurantDropdown(false), 120)}
-                placeholder="Example: Village Nasi Lemak"
-              />
-              {role === 'vendor' && showRestaurantDropdown && restaurantOptions.length > 0 ? (
-                <ul className="restaurant-dropdown" role="listbox" aria-label="Restaurant suggestions">
-                  {restaurantOptions.map((option) => (
-                    <li key={option.store_id}>
-                      <button
-                        type="button"
-                        className="restaurant-option"
-                        onMouseDown={() => {
-                          setRestaurantName(option.name)
-                          setShowRestaurantDropdown(false)
-                        }}
-                      >
-                        <span>{option.name}</span>
-                        <small>{option.food_type}</small>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-            </div>
-            {role === 'vendor' ? (
-              <small className="field-hint">Type restaurant name to see matches from clean_restaurants data.</small>
-            ) : null}
-          </label>
+              <label className="field">
+                <span>Restaurant Name (optional)</span>
+                <div className="restaurant-search-wrap">
+                  <input
+                    type="text"
+                    value={restaurantName}
+                    onChange={(event) => setRestaurantName(event.target.value)}
+                    onFocus={() => setShowRestaurantDropdown(restaurantOptions.length > 0)}
+                    onBlur={() => setTimeout(() => setShowRestaurantDropdown(false), 120)}
+                    placeholder="Example: Village Nasi Lemak"
+                  />
+                  {showRestaurantDropdown && restaurantOptions.length > 0 ? (
+                    <ul className="restaurant-dropdown" role="listbox" aria-label="Restaurant suggestions">
+                      {restaurantOptions.map((option) => (
+                        <li key={option.store_id}>
+                          <button
+                            type="button"
+                            className="restaurant-option"
+                            onMouseDown={() => {
+                              setRestaurantName(option.name)
+                              setShowRestaurantDropdown(false)
+                            }}
+                          >
+                            <span>{option.name}</span>
+                            <small>{option.food_type}</small>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+                <small className="field-hint">Type restaurant name to see matches from clean_restaurants data.</small>
+              </label>
 
-          {role === 'vendor' ? (
-            <label className="field">
-              <span>
-                External Reviews for Unlisted Restaurant (one review per line)
-              </span>
-              <textarea
-                rows={6}
-                value={externalReviewsText}
-                onChange={(event) => setExternalReviewsText(event.target.value)}
-                placeholder="Paste reviews here when the restaurant is not in database"
-              />
-            </label>
-          ) : null}
+              <div className="actions">
+                <button type="submit" className="primary" disabled={isLoading}>
+                  {isLoading ? 'Generating...' : 'Generate AI Answer'}
+                </button>
+              </div>
+            </>
+          )}
 
-          <div className="actions">
-            <button type="submit" className="primary" disabled={isLoading}>
-              {isLoading ? 'Generating...' : 'Generate AI Answer'}
-            </button>
-          </div>
+          {/* VENDOR VIEW */}
+          {role === 'vendor' && (
+            <>
+              <label className="field">
+                <span>Your Restaurant</span>
+                <div style={{
+                  padding: '14px',
+                  background: 'rgba(255, 200, 100, 0.15)',
+                  border: '2px solid rgba(255, 150, 100, 0.3)',
+                  borderRadius: '8px',
+                  color: '#333',
+                }}>
+                  {vendorRestaurant ? (
+                    <>
+                      <p style={{ fontSize: '1.05rem', fontWeight: '600', margin: '0 0 6px 0' }}>
+                        {vendorRestaurant.name}
+                      </p>
+                      <p style={{ fontSize: '0.85rem', color: '#666', margin: '0' }}>
+                        Store ID: <strong>{vendorRestaurant.store_id}</strong>
+                      </p>
+                    </>
+                  ) : (
+                    <p style={{ fontSize: '0.95rem', color: '#d32f2f', fontWeight: '500', margin: '0' }}>
+                      Loading restaurant information...
+                    </p>
+                  )}
+                </div>
+                <small className="field-hint">
+                  {vendorRestaurant 
+                    ? 'This is your registered restaurant. The system will analyze reviews and data for this restaurant.'
+                    : 'Restaurant information is being loaded...'}
+                </small>
+              </label>
+
+              <label className="field">
+                <span>Prompt</span>
+                <textarea
+                  rows={4}
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  placeholder="Ask about your restaurant insights..."
+                  required
+                />
+              </label>
+
+              <label className="field">
+                <span>
+                  Additional Reviews (optional - one review per line)
+                </span>
+                <textarea
+                  rows={4}
+                  value={externalReviewsText}
+                  onChange={(event) => setExternalReviewsText(event.target.value)}
+                  placeholder="Optionally paste additional reviews here. System will primarily analyze your registered restaurant's database reviews."
+                />
+                <small className="field-hint">
+                  The system will automatically analyze all reviews in the database for your restaurant. This field is optional for supplementary reviews.
+                </small>
+              </label>
+
+              <div className="actions">
+                <button type="submit" className="primary" disabled={isLoading}>
+                  {isLoading ? 'Generating...' : 'Generate AI Answer'}
+                </button>
+              </div>
+            </>
+          )}
         </form>
 
         <div className="example-block">

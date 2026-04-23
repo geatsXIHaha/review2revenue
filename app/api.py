@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .repository import (
     find_restaurant_by_name,
     get_chat_history,
+    find_restaurant_by_store_id,
     get_metrics_for_store_ids,
     get_recent_reviews,
     list_chat_conversations,
@@ -84,6 +85,21 @@ def search_restaurants(query: str = Query(min_length=1), limit: int = Query(defa
     except Exception:
         rows = []
     return {"restaurants": rows}
+
+
+@app.get("/api/restaurants/by-store-id")
+def get_restaurant_by_store_id(store_id: str = Query(min_length=1)) -> Dict:
+    """Get a restaurant by its store_id"""
+    try:
+        restaurant = find_restaurant_by_store_id(store_id)
+        if restaurant:
+            return {"restaurant": restaurant}
+        else:
+            raise HTTPException(status_code=404, detail=f"Restaurant with store_id '{store_id}' not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/sentiment/engine")

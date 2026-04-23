@@ -3,33 +3,46 @@
   margin: 2.5rem auto;
   display: grid;
   gap: 1.5rem;
+  position: relative;
+  z-index: 10;
+  padding-bottom: 120px;
 }
 
 .hero {
-  background: linear-gradient(125deg, #1a3a2f 0%, #2f5f4d 48%, #537c6e 100%);
-  color: #f3f7f5;
+  background: rgba(255, 255, 255, 0.92);
+  border: 2px solid rgba(255, 200, 150, 0.3);
+  color: #A0756A;
   border-radius: 20px;
-  padding: 1.5rem;
-  box-shadow: 0 12px 28px rgba(26, 58, 47, 0.25);
+  padding: 2rem 1.5rem;
+  box-shadow: 0 4px 12px rgba(255, 107, 107, 0.08);
 }
 
 .eyebrow {
-  margin: 0;
+  margin: 0 0 0.5rem 0;
   text-transform: uppercase;
   letter-spacing: 0.12em;
-  font-size: 0.78rem;
+  font-size: clamp(0.7rem, 2vw, 0.85rem);
   opacity: 0.85;
+  color: #A0756A;
+  font-weight: 700;
 }
 
 .hero h1 {
-  margin: 0.3rem 0;
-  color: #ffffff;
-  font-size: clamp(1.5rem, 2.7vw, 2.3rem);
+  margin: 0.5rem 0;
+  background: linear-gradient(135deg, #FF6B6B 0%, #FF8E53 40%, #FF6BA8 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  font-size: clamp(1.8rem, 4vw, 2.5rem);
+  line-height: 1.2;
+  word-wrap: break-word;
 }
 
 .subtext {
-  margin: 0;
-  color: rgba(243, 247, 245, 0.92);
+  margin: 0.8rem 0 0 0;
+  color: #A0756A;
+  font-size: clamp(0.95rem, 2vw, 1.1rem);
+  line-height: 1.5;
 }
 
 .hero-actions {
@@ -37,34 +50,39 @@
 }
 
 .panel {
-  background: rgba(255, 255, 255, 0.96);
-  border: 1px solid #dfe7e4;
+  background: rgba(255, 255, 255, 0.92);
+  border: 2px solid rgba(255, 200, 150, 0.3);
   border-radius: 20px;
-  padding: 1.25rem;
+  padding: 1.75rem;
   display: grid;
-  gap: 1rem;
-  box-shadow: 0 10px 24px rgba(27, 49, 40, 0.1);
+  gap: 1.2rem;
+  box-shadow: 0 4px 12px rgba(255, 107, 107, 0.08);
 }
 
 .role-tabs {
   display: flex;
   gap: 0.75rem;
+  flex-wrap: wrap;
 }
 
 .tab {
-  border: 1px solid #c8d6d1;
-  background: #f6faf8;
-  color: #1e4034;
+  border: 1px solid rgba(255, 200, 150, 0.5);
+  background: rgba(255, 255, 255, 0.4);
+  color: #FF6B6B;
   border-radius: 999px;
-  padding: 0.5rem 0.95rem;
+  padding: 0.6rem 1.2rem;
   cursor: pointer;
-  font-size: 0.95rem;
+  font-size: clamp(0.9rem, 2vw, 1rem);
+  transition: all 0.3s ease;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 .tab.active {
-  background: #1f4b3d;
+  background: linear-gradient(135deg, #FF6B6B 0%, #FF8E53 100%);
   color: #ffffff;
-  border-color: #1f4b3d;
+  border-color: #FF6B6B;
+  box-shadow: 0 2px 8px rgba(255, 107, 107, 0.15);
 }
 
 .form-grid {
@@ -122,18 +140,19 @@
 
 .field {
   display: grid;
-  gap: 0.45rem;
+  gap: 0.5rem;
 }
 
 .field span {
-  color: #1f4236;
-  font-size: 0.9rem;
-  font-weight: 600;
+  color: #A0756A;
+  font-size: clamp(0.85rem, 2vw, 0.95rem);
+  font-weight: 700;
 }
 
 .field-hint {
-  color: #49685d;
-  font-size: 0.8rem;
+  color: #B8A89A;
+  font-size: clamp(0.75rem, 1.5vw, 0.85rem);
+  margin-top: 0.3rem;
 }
 
 .restaurant-search-wrap {
@@ -149,10 +168,10 @@
   list-style: none;
   margin: 0;
   padding: 0.35rem;
-  border: 1px solid #c9d8d2;
-  background: #ffffff;
+  border: 1px solid rgba(255, 200, 150, 0.5);
+  background: rgba(255, 255, 255, 0.95);
   border-radius: 10px;
-  box-shadow: 0 10px 20px rgba(29, 54, 44, 0.13);
+  box-shadow: 0 2px 8px rgba(255, 107, 107, 0.08);
   max-height: 220px;
   overflow-y: auto;
 }
@@ -167,29 +186,35 @@
   padding: 0.55rem 0.6rem;
   display: grid;
   gap: 0.1rem;
+  transition: all 0.2s ease;
 }
 
 .restaurant-option:hover {
-  background: #f2f8f5;
+  background: rgba(255, 214, 165, 0.3);
 }
 
 .restaurant-option span {
-  color: #15362b;
-  font-weight: 600;
+  color: #A0756A;
+  font-weight: 700;
+  font-size: clamp(0.85rem, 2vw, 0.95rem);
 }
 
 .restaurant-option small {
-  color: #58786d;
-  font-size: 0.76rem;
+  color: #B8A89A;
+  font-size: clamp(0.7rem, 1.5vw, 0.8rem);
 }
 
 textarea,
 input {
-  border: 1px solid #ccd9d5;
+  border: 1px solid rgba(255, 200, 150, 0.5);
   border-radius: 10px;
-  padding: 0.7rem 0.8rem;
+  padding: 0.85rem;
   font: inherit;
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.9);
+  color: #A0756A;
+  font-size: clamp(0.9rem, 2vw, 1rem);
+  min-height: 44px;
+  line-height: 1.5;
 }
 
 textarea:focus,
@@ -197,7 +222,7 @@ input:focus,
 .tab:focus,
 .primary:focus,
 .example:focus {
-  outline: 2px solid #3f7e69;
+  outline: 2px solid #FF6B6B;
   outline-offset: 1px;
 }
 
@@ -207,12 +232,21 @@ input:focus,
 
 .primary {
   border: none;
-  background: #234f40;
+  background: linear-gradient(135deg, #FF6B6B 0%, #FF8E53 100%);
   color: #ffffff;
   border-radius: 10px;
-  padding: 0.75rem 1.2rem;
+  padding: 0.85rem 1.5rem;
   cursor: pointer;
-  font-weight: 600;
+  font-weight: 700;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(255, 107, 107, 0.2);
+  font-size: clamp(0.9rem, 2vw, 1rem);
+  white-space: nowrap;
+}
+
+.primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(255, 107, 107, 0.25);
 }
 
 .primary:disabled {
@@ -223,76 +257,90 @@ input:focus,
 .example-block h2,
 .result h2 {
   margin: 0;
-  font-size: 1.08rem;
-  color: #18362c;
+  font-size: clamp(1rem, 2.5vw, 1.2rem);
+  color: #A0756A;
+  font-weight: 700;
 }
 
 .example-block ul {
   list-style: none;
-  margin: 0.6rem 0 0;
+  margin: 0.8rem 0 0;
   padding: 0;
   display: grid;
-  gap: 0.5rem;
+  gap: 0.6rem;
 }
 
 .example {
   width: 100%;
   text-align: left;
-  border: 1px dashed #aec2bb;
-  background: #f4f9f7;
-  padding: 0.65rem 0.75rem;
+  border: 1px dashed rgba(255, 150, 100, 0.4);
+  background: rgba(255, 214, 165, 0.2);
+  padding: 0.85rem 1rem;
   border-radius: 10px;
   cursor: pointer;
-  color: #204538;
+  color: #A0756A;
+  transition: all 0.3s ease;
+  font-size: clamp(0.85rem, 2vw, 0.95rem);
+  line-height: 1.4;
+  word-wrap: break-word;
+}
+
+.example:hover {
+  background: rgba(255, 214, 165, 0.35);
+  border-color: rgba(255, 150, 100, 0.6);
 }
 
 .result {
-  border: 1px solid #d4dfdb;
-  background: #fcfefd;
+  border: 1px solid rgba(255, 200, 150, 0.5);
+  background: rgba(255, 255, 255, 0.88);
   border-radius: 12px;
-  padding: 0.9rem;
+  padding: 1.1rem;
 }
 
 .meta-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.45rem;
-  margin-top: 0.55rem;
+  gap: 0.6rem;
+  margin-top: 0.7rem;
 }
 
 .meta-pill {
   display: inline-flex;
   align-items: center;
-  border: 1px solid #b9cbc4;
-  background: #f3f8f6;
-  color: #234338;
+  border: 1px solid rgba(255, 150, 100, 0.4);
+  background: rgba(255, 214, 165, 0.3);
+  color: #A0756A;
   border-radius: 999px;
-  padding: 0.3rem 0.6rem;
-  font-size: 0.78rem;
-  font-weight: 600;
+  padding: 0.4rem 0.8rem;
+  font-size: clamp(0.7rem, 1.5vw, 0.85rem);
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .meta-pill--trained {
-  border-color: #8dc8a8;
-  background: #e8f7ef;
-  color: #1f5b3d;
+  border-color: rgba(181, 234, 215, 0.6);
+  background: rgba(181, 234, 215, 0.3);
+  color: #2D8B7E;
 }
 
 .meta-pill--fallback {
-  border-color: #e0c089;
-  background: #fff5e4;
-  color: #6b4b1e;
+  border-color: rgba(255, 234, 167, 0.6);
+  background: rgba(255, 234, 167, 0.3);
+  color: #C87A3F;
 }
 
 .meta-pill--unknown {
-  border-color: #c9cfd6;
-  background: #f4f6f8;
-  color: #3d4b57;
+  border-color: rgba(201, 177, 255, 0.5);
+  background: rgba(201, 177, 255, 0.2);
+  color: #7D5FBF;
 }
 
 .result p {
-  margin: 0.45rem 0 0;
+  margin: 0.6rem 0 0;
   white-space: pre-wrap;
+  color: #A0756A;
+  font-size: clamp(0.85rem, 2vw, 0.95rem);
+  line-height: 1.6;
 }
 
 .chat-window {
@@ -340,18 +388,48 @@ input:focus,
 }
 
 .error {
-  color: #b42318;
+  color: #FF6B6B;
+  font-weight: 700;
+  font-size: clamp(0.85rem, 2vw, 0.95rem);
 }
 
 @media (max-width: 720px) {
   .page {
-    width: calc(100% - 1rem);
-    margin: 1rem auto;
+    width: calc(100% - 1.5rem);
+    margin: 1.5rem auto;
+    padding-bottom: 120px;
   }
 
   .role-tabs {
     display: grid;
     grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+  }
+
+  .panel {
+    padding: 1.25rem;
+    gap: 0.8rem;
+  }
+
+  .hero {
+    padding: 1.5rem 1.25rem;
+  }
+
+  textarea,
+  input {
+    padding: 0.75rem;
+  }
+
+  .login-card {
+    width: 95%;
+    padding: 40px 25px;
+  }
+}
+
+/* Ensure proper spacing at the bottom for ribbon */
+@media (max-height: 800px) {
+  .page {
+    padding-bottom: 150px;
   }
 
   .chat-header {

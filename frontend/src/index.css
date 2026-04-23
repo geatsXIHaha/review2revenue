@@ -1,8 +1,17 @@
 :root {
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  --cream: #FFF8F0;
+  --peach: #FFD6A5;
+  --coral: #FF6B6B;
+  --mint: #B5EAD7;
+  --yellow: #FFEAA7;
+  --pink: #FFB7C5;
+  --purple: #C9B1FF;
+  --sky: #A8E6CF;
+  
+  font-family: 'Baloo 2', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   line-height: 1.45;
   font-weight: 400;
-  color: #1b342b;
+  color: #A0756A;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -16,9 +25,10 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: radial-gradient(circle at 20% 20%, #e3efea 0%, #f2f8f5 36%, #f7faf8 100%);
+  background: transparent;
 }
 
 #root {
   min-height: 100vh;
 }
+
