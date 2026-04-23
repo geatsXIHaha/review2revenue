@@ -1,16 +1,20 @@
 from typing import Dict, List, Tuple
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from .repository import (
     find_restaurant_by_name,
+    get_chat_history,
     get_metrics_for_store_ids,
     get_recent_reviews,
+    list_chat_conversations,
     list_restaurants,
+    save_chat_message,
     search_restaurants_by_name,
 )
-from .schemas import AskRequest, AskResponse
+from .schemas import AskRequest, AskResponse, ChatHistoryResponse, ConversationSummary
 from .sentiment_model import get_sentiment_engine_status, predict_sentiment_summary
 from .zai_client import ZAIClient
 
@@ -89,14 +93,35 @@ def sentiment_engine() -> Dict[str, str]:
 
 @app.post("/api/ask", response_model=AskResponse)
 def ask(payload: AskRequest) -> AskResponse:
+    conversation_id = (payload.conversation_id or str(uuid4())).strip()
+    history = get_chat_history(conversation_id, payload.role, limit=20)
+
     if payload.role == "diner":
-        return _handle_diner(payload)
+        response = _handle_diner(payload, conversation_id=conversation_id, history=history)
+        return response
     if payload.role == "vendor":
-        return _handle_vendor(payload)
+        response = _handle_vendor(payload, conversation_id=conversation_id, history=history)
+        return response
     raise HTTPException(status_code=400, detail="Unsupported role")
 
 
-def _handle_diner(payload: AskRequest) -> AskResponse:
+@app.get("/api/chat/history", response_model=ChatHistoryResponse)
+def chat_history(conversation_id: str, role: str) -> ChatHistoryResponse:
+    if role not in {"diner", "vendor"}:
+        raise HTTPException(status_code=400, detail="Unsupported role")
+    messages = get_chat_history(conversation_id=conversation_id, role=role, limit=100)
+    return ChatHistoryResponse(conversation_id=conversation_id, role=role, messages=messages)
+
+
+@app.get("/api/chat/conversations", response_model=List[ConversationSummary])
+def chat_conversations(role: str, limit: int = Query(default=50, ge=1, le=200)) -> List[ConversationSummary]:
+    if role not in {"diner", "vendor"}:
+        raise HTTPException(status_code=400, detail="Unsupported role")
+    rows = list_chat_conversations(role=role, limit=limit)
+    return [ConversationSummary(**row) for row in rows]
+
+
+def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]) -> AskResponse:
     restaurants = list_restaurants(limit=60)
     if not restaurants:
         raise HTTPException(status_code=500, detail="No restaurants available in database")
@@ -123,15 +148,18 @@ def _handle_diner(payload: AskRequest) -> AskResponse:
     ai_input = {
         "role": "diner",
         "user_prompt": payload.prompt,
+        "conversation_history": [{"sender": h.get("sender"), "message": h.get("message")} for h in history],
         "top_candidates": context_items,
         "output_format": "Top choices, reasons, trade-offs, and final best pick",
     }
     answer = zai_client.generate(DINER_SYSTEM_PROMPT, ai_input)
+    save_chat_message(conversation_id, payload.role, "user", payload.prompt, payload.restaurant_name)
+    save_chat_message(conversation_id, payload.role, "assistant", answer, payload.restaurant_name)
 
-    return AskResponse(answer=answer, source="database", confidence=0.82)
+    return AskResponse(answer=answer, conversation_id=conversation_id, source="database", confidence=0.82)
 
 
-def _handle_vendor(payload: AskRequest) -> AskResponse:
+def _handle_vendor(payload: AskRequest, conversation_id: str, history: List[Dict]) -> AskResponse:
     if payload.restaurant_name:
         found = find_restaurant_by_name(payload.restaurant_name)
         if found:
@@ -143,11 +171,14 @@ def _handle_vendor(payload: AskRequest) -> AskResponse:
                 "restaurant": found,
                 "metrics": metrics,
                 "recent_reviews": [r.get("review_text", "") for r in reviews],
+                "conversation_history": [{"sender": h.get("sender"), "message": h.get("message")} for h in history],
                 "user_prompt": payload.prompt,
                 "output_format": "strengths, weaknesses, prioritized actions, expected impact",
             }
             answer = zai_client.generate(VENDOR_SYSTEM_PROMPT, ai_input)
-            return AskResponse(answer=answer, source="database", confidence=0.86)
+            save_chat_message(conversation_id, payload.role, "user", payload.prompt, payload.restaurant_name)
+            save_chat_message(conversation_id, payload.role, "assistant", answer, payload.restaurant_name)
+            return AskResponse(answer=answer, conversation_id=conversation_id, source="database", confidence=0.86)
 
     if payload.external_reviews:
         sentiment = _simple_sentiment_summary(payload.external_reviews)
@@ -158,17 +189,22 @@ def _handle_vendor(payload: AskRequest) -> AskResponse:
             "sentiment_summary": sentiment,
             "sentiment_engine": get_sentiment_engine_status(),
             "sentiment_confidence": sentiment.get("model_confidence", 0.0),
+            "conversation_history": [{"sender": h.get("sender"), "message": h.get("message")} for h in history],
             "user_prompt": payload.prompt,
             "output_format": "strengths, weaknesses, prioritized actions, expected impact",
         }
         answer = zai_client.generate(VENDOR_SYSTEM_PROMPT, ai_input)
-        return AskResponse(answer=answer, source="external_reviews", confidence=0.68)
+        save_chat_message(conversation_id, payload.role, "user", payload.prompt, payload.restaurant_name)
+        save_chat_message(conversation_id, payload.role, "assistant", answer, payload.restaurant_name)
+        return AskResponse(answer=answer, conversation_id=conversation_id, source="external_reviews", confidence=0.68)
 
     message = (
         "Restaurant not found in database. Provide external_reviews (list of review texts) "
         "to run dynamic analysis for unseen restaurants."
     )
-    return AskResponse(answer=message, source="fallback", confidence=0.45)
+    save_chat_message(conversation_id, payload.role, "user", payload.prompt, payload.restaurant_name)
+    save_chat_message(conversation_id, payload.role, "assistant", message, payload.restaurant_name)
+    return AskResponse(answer=message, conversation_id=conversation_id, source="fallback", confidence=0.45)
 
 
 def _rank_restaurants(prompt: str, restaurants: List[Dict], metrics_map: Dict[str, Dict]) -> List[Tuple[float, Dict]]:

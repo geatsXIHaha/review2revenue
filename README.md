@@ -239,7 +239,7 @@ python scripts/enrich_restaurants_google_hours.py --region "Petaling Jaya, Malay
 Added columns include:
 - `operating_hours_monday` ... `operating_hours_sunday`
 - `operating_hours_by_day_json`
-- `google_place_id`, `google_matched_name`, `google_formatted_address`, `google_business_status`
+- `google_place_id`, `google_formatted_address`, `google_business_status`
 - `google_price_level`, `google_price_tier`
 - `google_lat`, `google_lng`
 - `google_website`, `google_phone`
@@ -262,6 +262,7 @@ Notes for best quality:
 Request body fields:
 - `role`: `diner` or `vendor`
 - `prompt`: user question
+- `conversation_id`: optional chat session id (recommended for memory)
 - `restaurant_name`: optional
 - `external_reviews`: optional list of review text (for unlisted restaurants)
 
@@ -269,6 +270,15 @@ Behavior:
 - Diner role uses DB restaurants + metrics to rank and explain.
 - Vendor role uses DB data when restaurant exists.
 - If not in DB, vendor can send `external_reviews` for dynamic analysis.
+- Backend stores chat turns in `chat_messages` table and uses past conversation for follow-up context.
+
+### `GET /api/chat/history`
+
+Query params:
+- `conversation_id`: chat session id
+- `role`: `diner` or `vendor`
+
+Returns stored messages for that conversation and role.
 
 ## Quick Start (Minimal)
 

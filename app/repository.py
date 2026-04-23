@@ -10,6 +10,117 @@ from .config import DB_URL
 engine: Engine = create_engine(DB_URL)
 
 
+def _ensure_chat_messages_table() -> None:
+    query = text(
+        """
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id BIGSERIAL PRIMARY KEY,
+            conversation_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            sender TEXT NOT NULL,
+            message TEXT NOT NULL,
+            restaurant_name TEXT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+    index_query = text(
+        """
+        CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_created
+        ON chat_messages (conversation_id, created_at)
+        """
+    )
+    with engine.begin() as conn:
+        conn.execute(query)
+        conn.execute(index_query)
+
+
+def save_chat_message(
+    conversation_id: str,
+    role: str,
+    sender: str,
+    message: str,
+    restaurant_name: Optional[str] = None,
+) -> None:
+    if not conversation_id or not message.strip():
+        return
+
+    _ensure_chat_messages_table()
+    query = text(
+        """
+        INSERT INTO chat_messages (conversation_id, role, sender, message, restaurant_name)
+        VALUES (:conversation_id, :role, :sender, :message, :restaurant_name)
+        """
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            query,
+            {
+                "conversation_id": conversation_id,
+                "role": role,
+                "sender": sender,
+                "message": message,
+                "restaurant_name": restaurant_name,
+            },
+        )
+
+
+def get_chat_history(conversation_id: str, role: str, limit: int = 20) -> List[Dict]:
+    if not conversation_id:
+        return []
+
+    _ensure_chat_messages_table()
+    query = text(
+        """
+        SELECT sender, message, created_at, restaurant_name
+        FROM chat_messages
+        WHERE conversation_id = :conversation_id AND role = :role
+        ORDER BY created_at ASC
+        LIMIT :limit
+        """
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(
+            query,
+            {"conversation_id": conversation_id, "role": role, "limit": limit},
+        ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+def list_chat_conversations(role: str, limit: int = 50) -> List[Dict]:
+    _ensure_chat_messages_table()
+    query = text(
+        """
+        SELECT conversation_id, role, message AS last_message, restaurant_name, created_at AS updated_at
+        FROM (
+            SELECT
+                conversation_id,
+                role,
+                sender,
+                message,
+                restaurant_name,
+                created_at,
+                ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY created_at DESC) AS rn
+            FROM chat_messages
+            WHERE role = :role
+        ) ranked
+        WHERE rn = 1
+        ORDER BY updated_at DESC
+        LIMIT :limit
+        """
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(query, {"role": role, "limit": limit}).mappings().all()
+
+    out: List[Dict] = []
+    for row in rows:
+        item = dict(row)
+        if item.get("updated_at") is not None:
+            item["updated_at"] = item["updated_at"].isoformat()
+        out.append(item)
+    return out
+
+
 def _restaurants_csv_path() -> Path:
     return Path(__file__).resolve().parent.parent / "data" / "clean_restaurants.csv"
 

@@ -22,6 +22,14 @@ if not reviews_path.exists():
 df_restaurants = pd.read_csv(restaurants_path)
 df_reviews = pd.read_csv(reviews_path)
 
+# Keep schema column as `name`; if old CSVs still carry google_matched_name,
+# fold values into name and remove the legacy column.
+if "google_matched_name" in df_restaurants.columns:
+	if "name" in df_restaurants.columns:
+		google_name = df_restaurants["google_matched_name"].astype(str).str.strip()
+		df_restaurants["name"] = google_name.where(google_name != "", df_restaurants["name"])
+	df_restaurants = df_restaurants.drop(columns=["google_matched_name"])
+
 # Connect to PostgreSQL
 engine = create_engine(DB_URL)
 

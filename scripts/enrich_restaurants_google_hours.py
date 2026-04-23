@@ -208,7 +208,6 @@ def enrich_hours(
     cols: Dict[str, List] = {
         "google_search_query":         [],
         "google_place_id":             [],
-        "google_matched_name":         [],
         "google_formatted_address":    [],
         "google_business_status":      [],
         "google_price_level":          [],
@@ -232,7 +231,6 @@ def enrich_hours(
     def _append_empty(query: str, source: str) -> None:
         cols["google_search_query"].append(query)
         cols["google_place_id"].append("")
-        cols["google_matched_name"].append("")
         cols["google_formatted_address"].append("")
         cols["google_business_status"].append("")
         cols["google_price_level"].append(-1)
@@ -282,7 +280,6 @@ def enrich_hours(
 
                 cols["google_search_query"].append(query)
                 cols["google_place_id"].append(resolved_id)
-                cols["google_matched_name"].append(matched_name)
                 cols["google_formatted_address"].append(matched_address)
                 cols["google_business_status"].append(matched_status)
                 cols["google_price_level"].append(int(price_level) if isinstance(price_level, int) else -1)
@@ -296,6 +293,9 @@ def enrich_hours(
                     cols[f"operating_hours_{day.lower()}"].append(parsed.get(day, ""))
                 cols["operating_hours_by_day_json"].append(json.dumps(parsed, ensure_ascii=False))
                 cols["operating_hours_source"].append("google_places")
+
+                # Keep the schema column as `name` and store Google's matched name directly.
+                rows.at[row.name, "name"] = matched_name or name
 
                 # Distance warning
                 anchor = _anchor_for(name)

@@ -104,6 +104,12 @@ function App() {
     setError('')
     setResponseMeta(null)
 
+    if (role === 'vendor' && restaurantName.trim().length < 1) {
+      setError('Vendor role requires restaurant name so analysis uses your restaurant data.')
+      setIsLoading(false)
+      return
+    }
+
     const externalReviews = externalReviewsText
       .split('\n')
       .map((line) => line.trim())
@@ -183,6 +189,17 @@ function App() {
         <p className="subtext">
           React frontend with Python backend, PostgreSQL data, and Z.AI reasoning.
         </p>
+        <div className="hero-actions">
+          <button
+            type="button"
+            className="primary"
+            onClick={() => {
+              window.location.href = '/chat'
+            }}
+          >
+            Open Chat
+          </button>
+        </div>
       </header>
 
       <section className="panel">
