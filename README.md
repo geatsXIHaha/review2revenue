@@ -1,24 +1,48 @@
 # Review2Revenue
 
-Review2Revenue is an AI-powered restaurant decision system with two roles:
-- User (diner): asks for restaurant recommendations with justification.
-- Vendor (restaurant): asks for strengths, problems, and improvement actions.
+Review2Revenue is an AI-powered restaurant decision system with two permanent roles:
+- **Diner**: Search restaurants, ask for recommendations with justification
+- **Vendor**: Access only their assigned restaurant, ask for analysis and improvements
 
 Tech stack:
-- Frontend: React + Vite + Firebase Authentication
+- Frontend: React + Vite + Firebase Authentication + Supabase Auth
 - Backend API: FastAPI (Python)
 - Database: PostgreSQL (Supabase)
 - AI layer: Groq (primary) + Gemini/Z.AI fallback
-- Authentication: Firebase (Google Sign-In)
+- Authentication: Firebase (Google Sign-In) + Supabase (User Profiles)
 - UI Theme: Glassmorphism with animated food elements
 - Legacy dashboard: Streamlit (still available)
 
 ## 🎨 Latest Updates (April 2026)
 
+✅ **Role-Based Access Control with Permanent Selection**
+- Users select role (Diner or Vendor) during registration
+- Role selection is **permanent** - cannot be changed after confirmation
+- Role warning clearly states: "Once you confirm this role, you **CANNOT change it** in the future"
+- Role badge displayed in header (🍴 Diner or 🏪 Vendor)
+
+✅ **Completely Separate Diner and Vendor Views**
+- **Diner View**: Restaurant search input (optional), can explore any restaurant, ask recommendations
+- **Vendor View**: Read-only restaurant display (name + store_id), cannot search, ask for business insights
+- No role-switching UI elements - role is locked after registration
+
+✅ **Vendor Restaurant Locking**
+- Vendors registered with a specific `store_id` see only their restaurant
+- Restaurant name and store_id fetched directly from database via `/api/restaurants/by-store-id` endpoint
+- Vendors cannot access or search other restaurants
+- External reviews optional - system focuses on vendor's own restaurant data
+
+✅ **Backend Store_ID Integration**
+- New API endpoint: `GET /api/restaurants/by-store-id?store_id={id}`
+- Backend receives and processes `store_id` parameter from vendor requests
+- Repository function `find_restaurant_by_store_id()` queries database directly
+- Vendor payloads include `store_id` for backend identification
+
 ✅ **Firebase Google Sign-In Authentication**
 - Users must authenticate with Google before accessing the app
 - Secure token-based session management
 - Profile information display in header
+- Automatic role fetch from Supabase after registration
 
 ✅ **Beautiful Foodie Theme**
 - Glassmorphic cards with blur effects
@@ -364,18 +388,56 @@ Notes for best quality:
 
 ## API Notes
 
-### `POST /api/ask`
+### `GET /api/restaurants/search`
+Search restaurants by name (used by diners)
+- Query: `query` (string, min 1 char)
+- Limit: `limit` (int, default 8, max 20)
+- Returns: List of restaurants with `store_id`, `name`, `food_type`, `avg_rating`, `review_count`
 
-Request body fields:
+### `GET /api/restaurants/by-store-id`
+Get a specific restaurant by store_id (used by vendors)
+- Query: `store_id` (string)
+- Returns: Single restaurant object with full details
+- Used during vendor app initialization to fetch their restaurant name
+
+### `POST /api/ask`
+Submit a prompt for AI analysis
+
+Request body:
 - `role`: `diner` or `vendor`
-- `prompt`: user question
-- `restaurant_name`: optional
-- `external_reviews`: optional list of review text (for unlisted restaurants)
+- `prompt`: user question (required)
+- `restaurant_name`: optional, used by diners for context
+- `store_id`: optional, included by vendors to identify their restaurant
+- `external_reviews`: optional list of review text (for supplementary analysis)
 
 Behavior:
-- Diner role uses DB restaurants + metrics to rank and explain.
-- Vendor role uses DB data when restaurant exists.
-- If not in DB, vendor can send `external_reviews` for dynamic analysis.
+- **Diner**: Uses `restaurant_name` to find restaurant, provides recommendations with metrics and sentiment
+- **Vendor**: Uses `store_id` from their profile to identify restaurant, provides business analysis
+- If `external_reviews` provided, includes sentiment analysis of those reviews alongside database data
+
+## Registration & User Management
+
+### Role Selection Flow (Registration)
+1. **Step 1 - Role Selection**: User chooses between 🍴 Diner or 🏪 Vendor
+2. **Step 1.5 - Role Confirmation**: User confirms their role with warning about permanence
+3. **Step 2 - Vendor-Only**: If vendor, search for and select their restaurant by name
+4. **Completion**: Profile saved to Supabase `users` table with role and store_id (vendors only)
+
+### Role Permanence
+- Once a user confirms their role, it **cannot be changed**
+- Role is stored in Supabase `users.role` column
+- Backend and frontend read role to determine which view to show
+- No role-switching UI elements exist after registration
+
+### User Profile Structure (Supabase `users` table)
+```sql
+id (UUID)              -- Firebase UID
+email (text)           -- User email
+user_name (text)       -- User display name
+role (ENUM)            -- 'diner' or 'vendor'
+store_id (text)        -- Foreign key to restaurants.store_id (vendors only)
+created_at (timestamp) -- Account creation time
+```
 
 ## Quick Start (Minimal Setup)
 

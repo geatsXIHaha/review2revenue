@@ -1,24 +1,62 @@
 import { useState, useEffect } from 'react'
 import { onAuthStateChanged } from 'firebase/auth'
 import { auth } from './firebase'
+import { supabase } from './supabase'
 import { Login, logout } from './Login'
+import Registration from './components/Registration'
 import App from './App'
 
 export function ProtectedApp() {
   const [user, setUser] = useState(null)
+  const [userProfile, setUserProfile] = useState(null) // Supabase user profile
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [registrationNeeded, setRegistrationNeeded] = useState(false)
 
   useEffect(() => {
     try {
       console.log('ProtectedApp: Setting up auth listener...')
-      
+
       // Listen for auth state changes
       const unsubscribe = onAuthStateChanged(
         auth,
-        (currentUser) => {
+        async (currentUser) => {
           console.log('Auth state changed:', currentUser?.email)
           setUser(currentUser)
+
+          if (currentUser) {
+            // Check if user profile exists in Supabase
+            try {
+              const { data, error } = await supabase
+                .from('users')
+                .select('*')
+                .eq('id', currentUser.uid)
+                .single()
+
+              if (error && error.code === 'PGRST116') {
+                // User not found in Supabase - registration needed
+                console.log('User not found in Supabase, registration needed')
+                setRegistrationNeeded(true)
+                setUserProfile(null)
+              } else if (error) {
+                throw error
+              } else {
+                // User profile exists
+                console.log('User profile found:', data)
+                setUserProfile(data)
+                setRegistrationNeeded(false)
+              }
+            } catch (dbError) {
+              console.error('Error checking user profile:', dbError)
+              // If there's an error querying the DB but user is authed, still show registration
+              setRegistrationNeeded(true)
+            }
+          } else {
+            // User logged out
+            setUserProfile(null)
+            setRegistrationNeeded(false)
+          }
+
           setLoading(false)
         },
         (authError) => {
@@ -84,7 +122,31 @@ export function ProtectedApp() {
     return <Login onLoginSuccess={setUser} />
   }
 
-  // User is logged in, show the main app
+  // If user is logged in but registration is needed, show registration flow
+  if (registrationNeeded) {
+    return (
+      <Registration
+        firebaseUser={user}
+        onRegistrationComplete={async () => {
+          try {
+            // Refresh user profile from Supabase immediately after registration
+            const { data } = await supabase
+              .from('users')
+              .select('*')
+              .eq('id', user.uid)
+              .single()
+            setUserProfile(data)
+            setRegistrationNeeded(false)
+          } catch (err) {
+            console.error('Failed to refresh user profile after registration:', err)
+            setRegistrationNeeded(false)
+          }
+        }}
+      />
+    )
+  }
+
+  // User is fully registered, show the main app
   return (
     <div>
       <div style={{
@@ -134,7 +196,7 @@ export function ProtectedApp() {
           🚪 Sign Out
         </button>
       </div>
-      <App />
+      <App userProfile={userProfile} />
     </div>
   )
 }
