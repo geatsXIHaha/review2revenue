@@ -5,6 +5,7 @@ import { supabase } from './supabase'
 import { Login, logout } from './Login'
 import Registration from './components/Registration'
 import App from './App'
+import ChatPage from './ChatPage'
 
 export function ProtectedApp() {
   const [user, setUser] = useState(null)
@@ -146,7 +147,9 @@ export function ProtectedApp() {
     )
   }
 
-  // User is fully registered, show the main app
+    // User is fully registered, show the main app
+  const path = window.location.pathname
+
   return (
     <div>
       <div style={{
@@ -169,6 +172,7 @@ export function ProtectedApp() {
         <span style={{ color: '#A0756A', fontWeight: '700', whiteSpace: 'nowrap' }}>
           👋 Welcome, {(user.displayName || user.email || '').substring(0, 20)}
         </span>
+
         <button
           onClick={logout}
           style={{
@@ -177,26 +181,18 @@ export function ProtectedApp() {
             color: 'white',
             border: 'none',
             borderRadius: '50px',
-            cursor: 'pointer',
-            fontSize: 'clamp(0.85rem, 2vw, 0.95rem)',
-            fontWeight: '700',
-            transition: 'all 0.3s ease',
-            boxShadow: '0 4px 12px rgba(255, 107, 107, 0.25)',
-            whiteSpace: 'nowrap'
-          }}
-          onMouseEnter={(e) => {
-            e.target.style.transform = 'translateY(-2px)'
-            e.target.style.boxShadow = '0 6px 20px rgba(255, 107, 107, 0.35)'
-          }}
-          onMouseLeave={(e) => {
-            e.target.style.transform = 'translateY(0)'
-            e.target.style.boxShadow = '0 4px 12px rgba(255, 107, 107, 0.25)'
+            cursor: 'pointer'
           }}
         >
           🚪 Sign Out
         </button>
       </div>
-      <App userProfile={userProfile} />
+
+      {path === '/chat' ? (
+        <ChatPage />
+      ) : (
+        <App userProfile={userProfile} />
+      )}
     </div>
   )
 }
