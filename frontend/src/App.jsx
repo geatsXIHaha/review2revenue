@@ -89,7 +89,7 @@ function App({ userProfile }) {
     formData.append("store_id", userProfile.store_id);
 
     try {
-      const response = await fetch(`${API_BASE}/api/reviews/upload-csv`, {
+     const response = await fetch(`${API_BASE}/api/reviews/upload`, {
         method: "POST",
         body: formData,
       });

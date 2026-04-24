@@ -939,34 +939,44 @@ async def upload_menu(
     except Exception as e:
         print(f"Upload error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+@app.post("/api/reviews/upload")
+async def upload_reviews(
+    file: UploadFile = File(...),
+    store_id: str = Form(...),
+) -> Dict:
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files are allowed.")
 
-@app.post("/api/reviews/upload-csv")
-async def upload_reviews_csv(file: UploadFile = File(...), store_id: str = Form(...)):
     try:
-        # 1. Read the uploaded CSV
         contents = await file.read()
-        df = pd.read_csv(io.StringIO(contents.decode('utf-8')))
+        df = pd.read_csv(io.BytesIO(contents))
 
-        # 2. Basic Validation (Check if required columns exist)
-        required_cols = ['review_text', 'overall_rating', 'food_rating']
-        if not all(col in df.columns for col in required_cols):
-            raise HTTPException(status_code=400, detail="Missing required CSV columns")
+        required_columns = ["review_text", "overall_rating", "food_rating"]
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            raise HTTPException(
+                status_code=400,
+                detail=f"CSV is missing required columns: {', '.join(missing_columns)}",
+            )
 
-        # 3. Add the store_id and timestamps
-        df['store_id'] = store_id
-        # Add any other cleaning logic here...
+        if "rider_rating" not in df.columns:
+            df["rider_rating"] = None
 
-        # 4. Convert to list of dicts for Supabase insertion
-        records = df.to_dict(orient='records')
-        
-        # 5. Insert into Supabase (Assuming you have a supabase client initialized)
-        # response = supabase.table('reviews').insert(records).execute()
+        df["store_id"] = store_id  # force correct store_id from logged-in user
+        df = df.where(pd.notnull(df), None)
+        records = df[["store_id", "review_text", "overall_rating", "food_rating", "rider_rating"]].to_dict(orient="records")
 
-        return {"message": "Success", "inserted_count": len(records)}
+        from .repository import insert_bulk_reviews
+        inserted_count = insert_bulk_reviews(records)
+        return {"message": "Reviews inserted successfully!", "inserted_count": inserted_count}
 
+    except pd.errors.EmptyDataError:
+        raise HTTPException(status_code=400, detail="The uploaded CSV file is empty.")
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"CRASH ERROR: {str(e)}") # This will show up in your terminal!
         raise HTTPException(status_code=500, detail=str(e))
+
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
 def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]) -> AskResponse:
