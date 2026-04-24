@@ -8,11 +8,13 @@ class AskRequest(BaseModel):
     role: str
     prompt: str = Field(min_length=3, max_length=2000)
     conversation_id: Optional[str] = Field(default=None, max_length=128)
+    user_id: Optional[str] = Field(default=None, max_length=128)
     restaurant_name: Optional[str] = None
     external_reviews: Optional[List[str]] = None
     user_lat: Optional[float] = None
     user_lng: Optional[float] = None
     city_name: Optional[str] = None
+    persist: bool = True
 
 
 class AskResponse(BaseModel):
@@ -35,3 +37,15 @@ class ConversationSummary(BaseModel):
     last_message: str
     restaurant_name: Optional[str] = None
     updated_at: str
+
+
+class StartConversationRequest(BaseModel):
+    conversation_id: Optional[str] = Field(default=None, max_length=128)
+    user_id: str = Field(min_length=1, max_length=128)
+    role: Role
+    question: str = Field(min_length=1, max_length=2000)
+    answer: str = Field(min_length=1, max_length=12000)
+
+
+class StartConversationResponse(BaseModel):
+    conversation_id: str

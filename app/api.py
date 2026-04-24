@@ -10,18 +10,28 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .repository import (
     count_reviews_matching_keywords,
-    find_restaurant_by_name,
     find_restaurant_by_store_id,
+    find_vendor_restaurant_by_user_id,
     get_chat_history,
     get_metrics_for_store_ids,
     get_recent_reviews,
     get_reviews_by_keywords,
+    get_existing_conversation_for_initial_pair,
     list_chat_conversations,
     list_restaurants,
     save_chat_message,
     search_restaurants_by_name,
+    start_conversation_with_initial_messages,
+    upsert_conversation,
 )
-from .schemas import AskRequest, AskResponse, ChatHistoryResponse, ConversationSummary
+from .schemas import (
+    AskRequest,
+    AskResponse,
+    ChatHistoryResponse,
+    ConversationSummary,
+    StartConversationRequest,
+    StartConversationResponse,
+)
 from .sentiment_model import get_sentiment_engine_status, predict_sentiment_summary
 from .zai_client import ZAIClient
 
@@ -906,7 +916,7 @@ def sentiment_engine() -> Dict[str, str]:
 @app.post("/api/ask", response_model=AskResponse)
 def ask(payload: AskRequest) -> AskResponse:
     conversation_id = (payload.conversation_id or str(uuid4())).strip()
-    history = get_chat_history(conversation_id, payload.role, limit=20)
+    history = get_chat_history(conversation_id, limit=20)
 
     if payload.role == "diner":
         response = _handle_diner(payload, conversation_id=conversation_id, history=history)
@@ -922,16 +932,54 @@ def ask(payload: AskRequest) -> AskResponse:
 def chat_history(conversation_id: str, role: str) -> ChatHistoryResponse:
     if role not in {"diner", "vendor"}:
         raise HTTPException(status_code=400, detail="Unsupported role")
-    messages = get_chat_history(conversation_id=conversation_id, role=role, limit=100)
+    messages = get_chat_history(conversation_id=conversation_id, limit=None)
     return ChatHistoryResponse(conversation_id=conversation_id, role=role, messages=messages)
 
 
 @app.get("/api/chat/conversations", response_model=List[ConversationSummary])
-def chat_conversations(role: str, limit: int = Query(default=50, ge=1, le=200)) -> List[ConversationSummary]:
+def chat_conversations(
+    role: str,
+    user_id: str = Query(min_length=1),
+    limit: int = Query(default=50, ge=1, le=200),
+) -> List[ConversationSummary]:
     if role not in {"diner", "vendor"}:
         raise HTTPException(status_code=400, detail="Unsupported role")
-    rows = list_chat_conversations(role=role, limit=limit)
+    rows = list_chat_conversations(role=role, user_id=user_id, limit=limit)
     return [ConversationSummary(**row) for row in rows]
+
+
+@app.post("/api/chat/start", response_model=StartConversationResponse)
+def start_chat_conversation(payload: StartConversationRequest) -> StartConversationResponse:
+    question = payload.question.strip()
+    answer = payload.answer.strip()
+    user_id = payload.user_id.strip()
+    if not question or not answer:
+        raise HTTPException(status_code=400, detail="Question and answer are required")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="User id is required")
+
+    existing_conversation_id = get_existing_conversation_for_initial_pair(
+        user_id=user_id,
+        role=payload.role,
+        question=question,
+        answer=answer,
+    )
+    if existing_conversation_id:
+        return StartConversationResponse(conversation_id=existing_conversation_id)
+
+    conversation_id = (payload.conversation_id or str(uuid4())).strip()
+    if not conversation_id:
+        raise HTTPException(status_code=400, detail="Invalid conversation id")
+
+    start_conversation_with_initial_messages(
+        conversation_id=conversation_id,
+        user_id=user_id,
+        role=payload.role,
+        question=question,
+        answer=answer,
+        restaurant_name=None,
+    )
+    return StartConversationResponse(conversation_id=conversation_id)
 
 
 def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]) -> AskResponse:
@@ -971,8 +1019,11 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
             "I can find the nearest restaurants once your location is available. "
             "Please allow location access and send user_lat/user_lng, then I will compute exact distance_km."
         )
-        save_chat_message(conversation_id, payload.role, "user", payload.prompt, payload.restaurant_name)
-        save_chat_message(conversation_id, payload.role, "assistant", message, payload.restaurant_name)
+        if payload.persist:
+            if payload.user_id:
+                upsert_conversation(conversation_id, payload.user_id, payload.role, "Untitled chat")
+            save_chat_message(conversation_id, "user", payload.user_id or "user", payload.prompt, payload.restaurant_name)
+            save_chat_message(conversation_id, "assistant", "ai", message, payload.restaurant_name)
         return AskResponse(answer=message, conversation_id=conversation_id, source="fallback", confidence=0.96)
 
     ranked_score_map = {str(row["store_id"]): float(score) for score, row in ranked}
@@ -1092,52 +1143,63 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
         "has_user_location": loc_ok,
         "user_location": {"lat": user_lat, "lng": user_lng} if loc_ok else None,
         "distance_input_status": location_source,
-        "conversation_history": [{"sender": h.get("sender"), "message": h.get("message")} for h in history],
+        "conversation_history": [
+            {"role": "assistant" if str(h.get("sender", "")).lower() in {"assistant", "ai"} else "user", "content": h.get("message")}
+            for h in history
+        ],
         "top_candidates": context_items,
     }
     answer = zai_client.generate(DINER_SYSTEM_PROMPT, ai_input)
-    save_chat_message(conversation_id, payload.role, "user", payload.prompt, payload.restaurant_name)
-    save_chat_message(conversation_id, payload.role, "assistant", answer, payload.restaurant_name)
+    if payload.persist:
+        if payload.user_id:
+            upsert_conversation(conversation_id, payload.user_id, payload.role, "Untitled chat")
+        save_chat_message(conversation_id, "user", payload.user_id or "user", payload.prompt, payload.restaurant_name)
+        save_chat_message(conversation_id, "assistant", "ai", answer, payload.restaurant_name)
 
     return AskResponse(answer=answer, conversation_id=conversation_id, source="database", confidence=0.82, restaurants=context_items)
 
 def _handle_vendor(payload: AskRequest, conversation_id: str, history: List[Dict]) -> AskResponse:
     vendor_intent = _detect_vendor_intent(payload.prompt)
     aspect_focus = vendor_intent.replace("aspect_", "") if vendor_intent.startswith("aspect_") else None
-    if payload.restaurant_name:
-        found = find_restaurant_by_name(payload.restaurant_name)
-        if found:
-            store_id = found["store_id"]
-            now_myt = _now_myt()
-            metrics = get_metrics_for_store_ids([store_id]).get(store_id, {})
-            reviews = get_recent_reviews(store_id, limit=20)
-            scoped_reviews = _reviews_for_requested_period(reviews, payload.prompt, now_myt)
-            rest_block = _restaurant_context_block(found, now_myt)
-            ai_input = {
-                "role": "vendor",
-                "vendor_intent": vendor_intent,
-                "aspect_focus": aspect_focus,
-                "restaurant": {
-                    "store_id": found.get("store_id"),
-                    "name": found.get("name"),
-                    "food_type": found.get("food_type"),
-                    "avg_rating": found.get("avg_rating"),
-                    **rest_block,
-                },
-                "sentiment_summary": _sentiment_summary_from_metrics(metrics),
-                "recent_reviews": [_review_brief(r) for r in reviews if (r.get("review_text") or "").strip()],
-                "scoped_reviews": [_review_brief(r) for r in scoped_reviews if (r.get("review_text") or "").strip()],
-                "review_summary": _summarize_review_patterns(scoped_reviews or reviews),
-                "conversation_history": [{"sender": h.get("sender"), "message": h.get("message")} for h in history],
-                "user_prompt": payload.prompt,
-                "current_day_myt": now_myt.strftime("%A"),
-                "current_time_myt": now_myt.strftime("%I:%M %p"),
-                "timezone_note": "Malaysia Time (UTC+8).",
-            }
-            answer = zai_client.generate(VENDOR_SYSTEM_PROMPT, ai_input)
-            save_chat_message(conversation_id, payload.role, "user", payload.prompt, payload.restaurant_name)
-            save_chat_message(conversation_id, payload.role, "assistant", answer, payload.restaurant_name)
-            return AskResponse(answer=answer, conversation_id=conversation_id, source="database", confidence=0.86)
+    found = find_vendor_restaurant_by_user_id(payload.user_id) if payload.user_id else None
+    if found:
+        store_id = found["store_id"]
+        now_myt = _now_myt()
+        metrics = get_metrics_for_store_ids([store_id]).get(store_id, {})
+        reviews = get_recent_reviews(store_id, limit=20)
+        scoped_reviews = _reviews_for_requested_period(reviews, payload.prompt, now_myt)
+        rest_block = _restaurant_context_block(found, now_myt)
+        ai_input = {
+            "role": "vendor",
+            "vendor_intent": vendor_intent,
+            "aspect_focus": aspect_focus,
+            "restaurant": {
+                "store_id": found.get("store_id"),
+                "name": found.get("name"),
+                "food_type": found.get("food_type"),
+                "avg_rating": found.get("avg_rating"),
+                **rest_block,
+            },
+            "sentiment_summary": _sentiment_summary_from_metrics(metrics),
+            "recent_reviews": [_review_brief(r) for r in reviews if (r.get("review_text") or "").strip()],
+            "scoped_reviews": [_review_brief(r) for r in scoped_reviews if (r.get("review_text") or "").strip()],
+            "review_summary": _summarize_review_patterns(scoped_reviews or reviews),
+            "conversation_history": [
+                {"role": "assistant" if str(h.get("sender", "")).lower() in {"assistant", "ai"} else "user", "content": h.get("message")}
+                for h in history
+            ],
+            "user_prompt": payload.prompt,
+            "current_day_myt": now_myt.strftime("%A"),
+            "current_time_myt": now_myt.strftime("%I:%M %p"),
+            "timezone_note": "Malaysia Time (UTC+8).",
+        }
+        answer = zai_client.generate(VENDOR_SYSTEM_PROMPT, ai_input)
+        if payload.persist:
+            if payload.user_id:
+                upsert_conversation(conversation_id, payload.user_id, payload.role, "Untitled chat")
+            save_chat_message(conversation_id, "user", payload.user_id or "user", payload.prompt, found.get("name"))
+            save_chat_message(conversation_id, "assistant", "ai", answer, found.get("name"))
+        return AskResponse(answer=answer, conversation_id=conversation_id, source="database", confidence=0.86)
 
     if payload.external_reviews:
         sentiment = _simple_sentiment_summary(payload.external_reviews)
@@ -1153,20 +1215,29 @@ def _handle_vendor(payload: AskRequest, conversation_id: str, history: List[Dict
             "sentiment_summary": sentiment,
             "sentiment_engine": get_sentiment_engine_status(),
             "sentiment_confidence": sentiment.get("model_confidence", 0.0),
-            "conversation_history": [{"sender": h.get("sender"), "message": h.get("message")} for h in history],
+            "conversation_history": [
+                {"role": "assistant" if str(h.get("sender", "")).lower() in {"assistant", "ai"} else "user", "content": h.get("message")}
+                for h in history
+            ],
             "user_prompt": payload.prompt,
         }
         answer = zai_client.generate(VENDOR_SYSTEM_PROMPT, ai_input)
-        save_chat_message(conversation_id, payload.role, "user", payload.prompt, payload.restaurant_name)
-        save_chat_message(conversation_id, payload.role, "assistant", answer, payload.restaurant_name)
+        if payload.persist:
+            if payload.user_id:
+                upsert_conversation(conversation_id, payload.user_id, payload.role, "Untitled chat")
+            save_chat_message(conversation_id, "user", payload.user_id or "user", payload.prompt, None)
+            save_chat_message(conversation_id, "assistant", "ai", answer, None)
         return AskResponse(answer=answer, conversation_id=conversation_id, source="external_reviews", confidence=0.68)
 
     message = (
         "Restaurant not found in database. Provide external_reviews (list of review texts) "
         "to run dynamic analysis for unseen restaurants."
     )
-    save_chat_message(conversation_id, payload.role, "user", payload.prompt, payload.restaurant_name)
-    save_chat_message(conversation_id, payload.role, "assistant", message, payload.restaurant_name)
+    if payload.persist:
+        if payload.user_id:
+            upsert_conversation(conversation_id, payload.user_id, payload.role, "Untitled chat")
+        save_chat_message(conversation_id, "user", payload.user_id or "user", payload.prompt, None)
+        save_chat_message(conversation_id, "assistant", "ai", message, None)
     return AskResponse(answer=message, conversation_id=conversation_id, source="fallback", confidence=0.45)
 
 

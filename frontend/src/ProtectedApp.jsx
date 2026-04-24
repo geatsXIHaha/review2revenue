@@ -13,6 +13,17 @@ export function ProtectedApp() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [registrationNeeded, setRegistrationNeeded] = useState(false)
+  const [path, setPath] = useState(window.location.pathname)
+
+  useEffect(() => {
+    function handlePathChange() {
+      setPath(window.location.pathname)
+    }
+    window.addEventListener('popstate', handlePathChange)
+    return () => {
+      window.removeEventListener('popstate', handlePathChange)
+    }
+  }, [])
 
   useEffect(() => {
     try {
@@ -148,7 +159,6 @@ export function ProtectedApp() {
   }
 
     // User is fully registered, show the main app
-  const path = window.location.pathname
 
   return (
     <div>
@@ -189,7 +199,7 @@ export function ProtectedApp() {
       </div>
 
       {path === '/chat' ? (
-        <ChatPage />
+        <ChatPage userProfile={userProfile} />
       ) : (
         <App userProfile={userProfile} />
       )}

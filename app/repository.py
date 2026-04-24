@@ -1,4 +1,5 @@
 from pathlib import Path
+import threading
 from typing import Dict, List, Optional
 
 import pandas as pd
@@ -8,6 +9,8 @@ from sqlalchemy.engine import Engine
 from .config import DB_URL
 
 engine: Engine = create_engine(DB_URL)
+_CHAT_SCHEMA_INIT_LOCK = threading.Lock()
+_CHAT_SCHEMA_INITIALIZED = False
 
 # Columns that exist on public.restaurants (no review_count in schema).
 _RESTAURANT_SELECT_SQL = """
@@ -68,28 +71,135 @@ def _row_from_csv_record(rec: Dict) -> Dict:
 
 
 def _ensure_chat_messages_table() -> None:
+    global _CHAT_SCHEMA_INITIALIZED
+    if _CHAT_SCHEMA_INITIALIZED:
+        return
+
+    with _CHAT_SCHEMA_INIT_LOCK:
+        if _CHAT_SCHEMA_INITIALIZED:
+            return
+
+        conversations_query = text(
+            """
+            CREATE TABLE IF NOT EXISTS conversations (
+                conversation_id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('diner', 'vendor')),
+                title TEXT NULL DEFAULT 'Untitled chat',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        query = text(
+            """
+            CREATE TABLE IF NOT EXISTS chat_messages (
+                id BIGSERIAL PRIMARY KEY,
+                conversation_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                sender TEXT NOT NULL,
+                message TEXT NOT NULL,
+                restaurant_name TEXT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
+        index_query = text(
+            """
+            CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_created
+            ON chat_messages (conversation_id, created_at)
+            """
+        )
+        index_query_stable = text(
+            """
+            CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_created_id
+            ON chat_messages (conversation_id, created_at, id)
+            """
+        )
+        conversation_index_query = text(
+            """
+            CREATE INDEX IF NOT EXISTS idx_conversations_user_role_updated
+            ON conversations (user_id, role, updated_at DESC)
+            """
+        )
+        optional_indexes_query = text(
+            """
+            DO $$
+            BEGIN
+                IF to_regclass('public.reviews') IS NOT NULL THEN
+                    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_reviews_store_updated ON reviews (store_id, updated_at DESC)';
+                END IF;
+
+                IF to_regclass('public.restaurant_metrics') IS NOT NULL THEN
+                    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_restaurant_metrics_store ON restaurant_metrics (store_id)';
+                END IF;
+            END $$;
+            """
+        )
+
+        with engine.begin() as conn:
+            conn.execute(conversations_query)
+            conn.execute(query)
+            conn.execute(
+                text(
+                    """
+                    UPDATE chat_messages
+                    SET role = CASE
+                        WHEN LOWER(sender) IN ('assistant', 'ai') THEN 'assistant'
+                        ELSE 'user'
+                    END
+                    WHERE role NOT IN ('user', 'assistant')
+                    """
+                )
+            )
+            conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_constraint
+                            WHERE conname = 'chat_messages_role_check'
+                        ) THEN
+                            ALTER TABLE chat_messages
+                            ADD CONSTRAINT chat_messages_role_check
+                            CHECK (role IN ('user', 'assistant'));
+                        END IF;
+                    END $$;
+                    """
+                )
+            )
+            conn.execute(index_query)
+            conn.execute(index_query_stable)
+            conn.execute(conversation_index_query)
+            conn.execute(optional_indexes_query)
+
+        _CHAT_SCHEMA_INITIALIZED = True
+
+
+def upsert_conversation(conversation_id: str, user_id: str, role: str, title: str = "Untitled chat") -> None:
+    if not conversation_id or not user_id or role not in {"diner", "vendor"}:
+        return
+    _ensure_chat_messages_table()
     query = text(
         """
-        CREATE TABLE IF NOT EXISTS chat_messages (
-            id BIGSERIAL PRIMARY KEY,
-            conversation_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            sender TEXT NOT NULL,
-            message TEXT NOT NULL,
-            restaurant_name TEXT NULL,
-            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-        """
-    )
-    index_query = text(
-        """
-        CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation_created
-        ON chat_messages (conversation_id, created_at)
+        INSERT INTO conversations (conversation_id, user_id, role, title)
+        VALUES (:conversation_id, :user_id, :role, :title)
+        ON CONFLICT (conversation_id)
+        DO NOTHING
         """
     )
     with engine.begin() as conn:
-        conn.execute(query)
-        conn.execute(index_query)
+        conn.execute(
+            query,
+            {
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+                "role": role,
+                "title": title or "Untitled chat",
+            },
+        )
 
 
 def save_chat_message(
@@ -99,7 +209,7 @@ def save_chat_message(
     message: str,
     restaurant_name: Optional[str] = None,
 ) -> None:
-    if not conversation_id or not message.strip():
+    if not conversation_id or not message.strip() or role not in {"user", "assistant"}:
         return
 
     _ensure_chat_messages_table()
@@ -120,46 +230,58 @@ def save_chat_message(
                 "restaurant_name": restaurant_name,
             },
         )
+        conn.execute(
+            text(
+                """
+                UPDATE conversations
+                SET updated_at = NOW()
+                WHERE conversation_id = :conversation_id
+                """
+            ),
+            {"conversation_id": conversation_id},
+        )
 
 
-def get_chat_history(conversation_id: str, role: str, limit: int = 20) -> List[Dict]:
+def get_chat_history(conversation_id: str, limit: Optional[int] = None) -> List[Dict]:
     if not conversation_id:
         return []
 
     _ensure_chat_messages_table()
-    query = text(
-        """
-        SELECT sender, message, created_at, restaurant_name
+    base_sql = """
+        SELECT id, role, sender, message, created_at, restaurant_name
         FROM chat_messages
-        WHERE conversation_id = :conversation_id AND role = :role
-        ORDER BY created_at ASC
-        LIMIT :limit
-        """
-    )
+        WHERE conversation_id = :conversation_id
+        ORDER BY created_at ASC, id ASC
+    """
+    query = text(base_sql if limit is None else f"{base_sql}\nLIMIT :limit")
     with engine.connect() as conn:
-        rows = conn.execute(
-            query,
-            {"conversation_id": conversation_id, "role": role, "limit": limit},
-        ).mappings().all()
+        params = {"conversation_id": conversation_id}
+        if limit is not None:
+            params["limit"] = limit
+        rows = conn.execute(query, params).mappings().all()
     return [dict(row) for row in rows]
 
 
-def list_chat_conversations(role: str, limit: int = 50) -> List[Dict]:
+def list_chat_conversations(role: str, user_id: str, limit: int = 50) -> List[Dict]:
     _ensure_chat_messages_table()
     query = text(
         """
         SELECT conversation_id, role, message AS last_message, restaurant_name, created_at AS updated_at
         FROM (
             SELECT
-                conversation_id,
-                role,
-                sender,
-                message,
-                restaurant_name,
-                created_at,
-                ROW_NUMBER() OVER (PARTITION BY conversation_id ORDER BY created_at DESC) AS rn
-            FROM chat_messages
-            WHERE role = :role
+                cm.id,
+                cm.conversation_id,
+                c.role,
+                cm.sender,
+                cm.message,
+                cm.restaurant_name,
+                cm.created_at,
+                ROW_NUMBER() OVER (PARTITION BY cm.conversation_id ORDER BY cm.created_at DESC, cm.id DESC) AS rn
+            FROM chat_messages cm
+            INNER JOIN conversations c
+                ON c.conversation_id = cm.conversation_id
+            WHERE c.role = :role
+              AND c.user_id = :user_id
         ) ranked
         WHERE rn = 1
         ORDER BY updated_at DESC
@@ -167,7 +289,7 @@ def list_chat_conversations(role: str, limit: int = 50) -> List[Dict]:
         """
     )
     with engine.connect() as conn:
-        rows = conn.execute(query, {"role": role, "limit": limit}).mappings().all()
+        rows = conn.execute(query, {"role": role, "user_id": user_id, "limit": limit}).mappings().all()
 
     out: List[Dict] = []
     for row in rows:
@@ -176,6 +298,110 @@ def list_chat_conversations(role: str, limit: int = 50) -> List[Dict]:
             item["updated_at"] = item["updated_at"].isoformat()
         out.append(item)
     return out
+
+
+def get_existing_conversation_for_initial_pair(user_id: str, role: str, question: str, answer: str) -> Optional[str]:
+    _ensure_chat_messages_table()
+    query = text(
+        """
+        SELECT c.conversation_id
+        FROM conversations c
+        INNER JOIN chat_messages u
+            ON u.conversation_id = c.conversation_id
+            AND u.role = 'user'
+            AND u.message = :question
+        INNER JOIN chat_messages a
+            ON a.conversation_id = c.conversation_id
+            AND a.role = 'assistant'
+            AND a.message = :answer
+        WHERE c.user_id = :user_id
+          AND c.role = :role
+        ORDER BY c.created_at DESC
+        LIMIT 1
+        """
+    )
+    with engine.connect() as conn:
+        row = conn.execute(
+            query,
+            {"user_id": user_id, "role": role, "question": question, "answer": answer},
+        ).mappings().first()
+    return str(row["conversation_id"]) if row else None
+
+
+def start_conversation_with_initial_messages(
+    conversation_id: str,
+    user_id: str,
+    role: str,
+    question: str,
+    answer: str,
+    restaurant_name: Optional[str] = None,
+) -> None:
+    _ensure_chat_messages_table()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO conversations (conversation_id, user_id, role, title)
+                VALUES (:conversation_id, :user_id, :role, :title)
+                ON CONFLICT (conversation_id)
+                DO NOTHING
+                """
+            ),
+            {
+                "conversation_id": conversation_id,
+                "user_id": user_id,
+                "role": role,
+                "title": "Untitled chat",
+            },
+        )
+        count_row = conn.execute(
+            text(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM chat_messages
+                WHERE conversation_id = :conversation_id
+                """
+            ),
+            {"conversation_id": conversation_id},
+        ).mappings().first()
+        if int(count_row["cnt"]) == 0:
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO chat_messages (conversation_id, role, sender, message, restaurant_name)
+                    VALUES (:conversation_id, 'user', :sender, :message, :restaurant_name)
+                    """
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "sender": user_id,
+                    "message": question,
+                    "restaurant_name": restaurant_name,
+                },
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO chat_messages (conversation_id, role, sender, message, restaurant_name)
+                    VALUES (:conversation_id, 'assistant', 'ai', :message, :restaurant_name)
+                    """
+                ),
+                {
+                    "conversation_id": conversation_id,
+                    "message": answer,
+                    "restaurant_name": restaurant_name,
+                },
+            )
+        conn.execute(
+            text(
+                """
+                UPDATE conversations
+                SET updated_at = NOW()
+                WHERE conversation_id = :conversation_id
+                """
+            ),
+            {"conversation_id": conversation_id},
+        )
 
 
 def _restaurants_csv_path() -> Path:
@@ -240,6 +466,23 @@ def find_restaurant_by_store_id(store_id: str) -> Optional[Dict]:
             if row.get("store_id") == store_id:
                 return row
         return None
+
+
+def find_vendor_restaurant_by_user_id(user_id: str):
+    query = text("""
+        SELECT r.*
+        FROM users u
+        JOIN restaurants r
+          ON r.store_id = u.store_id
+        WHERE u.id = :user_id
+          AND u.role = 'vendor'
+        LIMIT 1
+    """)
+
+    with engine.connect() as conn:
+        row = conn.execute(query, {"user_id": user_id}).mappings().first()
+
+    return dict(row) if row else None
 
 
 def list_restaurants(limit: int = 40) -> List[Dict]:

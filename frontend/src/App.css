@@ -418,6 +418,20 @@ input:focus,
   line-height: 1.6;
 }
 
+.ai-response-container {
+  margin-top: 0.6rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.ai-message {
+  color: #A0756A;
+}
+
+.ai-response-container .primary {
+  justify-self: start;
+}
+
 .chat-window {
   margin-top: 0.8rem;
   display: grid;

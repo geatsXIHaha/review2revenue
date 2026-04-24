@@ -43,6 +43,7 @@ const vendorExamples = [
 ]
 
 function App({ userProfile }) {
+  const userId = userProfile?.id || ''
   const registeredRole = userProfile?.role || 'diner'
   const [role, setRole] = useState(registeredRole)
   const [prompt, setPrompt] = useState('')
@@ -58,17 +59,31 @@ function App({ userProfile }) {
   const [vendorReviews, setVendorReviews] = useState([])
   const [showVendorReviews, setShowVendorReviews] = useState(false)
   const [isLoadingVendorReviews, setIsLoadingVendorReviews] = useState(false)
+  const [isStartingChat, setIsStartingChat] = useState(false)
+  const [lastSubmittedPrompt, setLastSubmittedPrompt] = useState('')
+  const [isVendorRestaurantLoading, setIsVendorRestaurantLoading] = useState(false)
+
+  function navigateTo(path) {
+    if (window.location.pathname === path) return
+    window.history.pushState({}, '', path)
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  }
 
   // Sync role with registeredRole whenever it changes
   useEffect(() => {
     setRole(registeredRole)
-    // Also update prompt when role changes
-    setPrompt(registeredRole === 'vendor' ? vendorExamples[0] : dinerExamples[0])
+    // Only seed an example prompt if the user has not typed anything yet.
+    setPrompt((currentPrompt) => {
+      if (currentPrompt.trim().length > 0) return currentPrompt
+      return registeredRole === 'vendor' ? vendorExamples[0] : dinerExamples[0]
+    })
   }, [registeredRole])
 
   // Fetch vendor's restaurant info if they're a vendor
   useEffect(() => {
     if (registeredRole === 'vendor' && userProfile?.store_id) {
+      let cancelled = false
+      setIsVendorRestaurantLoading(true)
       async function fetchVendorRestaurant() {
         try {
           // Fetch the restaurant directly by store_id
@@ -78,11 +93,13 @@ function App({ userProfile }) {
           if (response.ok) {
             const data = await response.json()
             const restaurant = data.restaurant
-            setVendorRestaurant({
-              store_id: restaurant.store_id,
-              name: restaurant.name,
-            })
-            setRestaurantName(restaurant.name)
+            if (!cancelled) {
+              setVendorRestaurant({
+                store_id: restaurant.store_id,
+                name: restaurant.name,
+              })
+              setRestaurantName(restaurant.name)
+            }
           } else {
             throw new Error('Restaurant not found')
           }
@@ -90,15 +107,25 @@ function App({ userProfile }) {
           console.error('Error fetching vendor restaurant:', err)
           // Fallback: set placeholder
           const fallbackName = `Restaurant ${userProfile.store_id}`
-          setVendorRestaurant({
-            store_id: userProfile.store_id,
-            name: fallbackName,
-          })
-          setRestaurantName(fallbackName)
+          if (!cancelled) {
+            setVendorRestaurant({
+              store_id: userProfile.store_id,
+              name: fallbackName,
+            })
+            setRestaurantName(fallbackName)
+          }
+        } finally {
+          if (!cancelled) {
+            setIsVendorRestaurantLoading(false)
+          }
         }
       }
       fetchVendorRestaurant()
+      return () => {
+        cancelled = true
+      }
     }
+    setIsVendorRestaurantLoading(false)
   }, [registeredRole, userProfile?.store_id])
 
   const roleExamples = role === 'diner' ? dinerExamples : vendorExamples
@@ -173,9 +200,27 @@ function App({ userProfile }) {
 
   async function handleSubmit(event) {
     event.preventDefault()
+    const submittedPrompt = prompt
     setIsLoading(true)
     setError('')
     setResponseMeta(null)
+
+    if (!submittedPrompt.trim()) {
+      setIsLoading(false)
+      return
+    }
+
+    if (role === 'vendor' && !userId) {
+      setError('Vendor profile is still loading. Please try again in a moment.')
+      setIsLoading(false)
+      return
+    }
+
+    if (role === 'vendor' && isVendorRestaurantLoading) {
+      setError('Loading restaurant information. Please try again in a moment.')
+      setIsLoading(false)
+      return
+    }
 
     if (role === 'vendor' && restaurantName.trim().length < 1) {
       setError('Vendor role requires restaurant name so analysis uses your restaurant data.')
@@ -184,7 +229,7 @@ function App({ userProfile }) {
     }
 
     let locationPayload = {}
-    if (role === 'diner' && isNearestIntent(prompt)) {
+    if (role === 'diner' && isNearestIntent(submittedPrompt)) {
       try {
         const loc = await getDeviceLocation()
         locationPayload = { user_lat: loc.lat, user_lng: loc.lng }
@@ -195,9 +240,14 @@ function App({ userProfile }) {
       }
     }
 
+    setPrompt('')
+    setLastSubmittedPrompt(submittedPrompt)
+
     const payload = {
       role,
-      prompt,
+      prompt: submittedPrompt,
+      user_id: userId || undefined,
+      persist: false,
       restaurant_name: restaurantName,
       // For vendors, include store_id so backend can fetch correct restaurant data
       ...(role === 'vendor' && userProfile?.store_id && { store_id: userProfile.store_id }),
@@ -229,6 +279,29 @@ function App({ userProfile }) {
       setResponseMeta(null)
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  function handleGoToChat() {
+    if (isStartingChat || !lastSubmittedPrompt.trim() || !result.trim() || !userId) {
+      return
+    }
+    setIsStartingChat(true)
+    try {
+      const transitionPayload = {
+        conversation_id:
+          typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+            ? crypto.randomUUID()
+            : `conv-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+        user_id: userId,
+        role,
+        question: lastSubmittedPrompt,
+        answer: result,
+      }
+      sessionStorage.setItem('pendingChatTransition', JSON.stringify(transitionPayload))
+      navigateTo('/chat')
+    } finally {
+      setIsStartingChat(false)
     }
   }
 
@@ -328,7 +401,7 @@ function App({ userProfile }) {
             type="button"
             className="primary"
             onClick={() => {
-              window.location.href = '/chat'
+              navigateTo('/chat')
             }}
           >
             Open Chat
@@ -387,7 +460,7 @@ function App({ userProfile }) {
               </label>
 
               <div className="actions">
-                <button type="submit" className="primary" disabled={isLoading}>
+                <button type="submit" className="primary" disabled={isLoading || !prompt.trim()}>
                   {isLoading ? 'Generating...' : 'Generate AI Answer'}
                 </button>
               </div>
@@ -440,14 +513,18 @@ function App({ userProfile }) {
               </label>
 
               <div className="actions">
-                <button type="submit" className="primary" disabled={isLoading}>
-                  {isLoading ? 'Generating...' : 'Generate AI Answer'}
+                <button
+                  type="submit"
+                  className="primary"
+                  disabled={isLoading || isVendorRestaurantLoading || !userId || !prompt.trim()}
+                >
+                  {isLoading || isVendorRestaurantLoading ? 'Generating...' : 'Generate AI Answer'}
                 </button>
                 <button
                   type="button"
                   className="primary secondary"
                   onClick={handleToggleVendorReviews}
-                  disabled={isLoadingVendorReviews || !vendorRestaurant}
+                  disabled={isLoadingVendorReviews || isVendorRestaurantLoading || !vendorRestaurant}
                 >
                   {isLoadingVendorReviews ? 'Loading...' : showVendorReviews ? 'Hide Reviews' : 'Reviews'}
                 </button>
@@ -509,7 +586,23 @@ function App({ userProfile }) {
             {responseMeta?.source ? <span className="meta-pill">Source: {responseMeta.source}</span> : null}
           </div>
           {error ? <p className="error">{error}</p> : null}
-          {!error && result ? <ReactMarkdown>{result}</ReactMarkdown> : <p>Submit a prompt to see the result.</p>}
+          {!error && result ? (
+            <div className="ai-response-container">
+              <div className="ai-message">
+                <ReactMarkdown>{result}</ReactMarkdown>
+              </div>
+              <button
+                type="button"
+                className="primary secondary"
+                onClick={handleGoToChat}
+                disabled={isStartingChat || !userId || !lastSubmittedPrompt.trim() || !result.trim()}
+              >
+                {isStartingChat ? 'Preparing chat...' : 'Go to Chat'}
+              </button>
+            </div>
+          ) : (
+            <p>Submit a prompt to see the result.</p>
+          )}
         </section>
       </section>
     </main>

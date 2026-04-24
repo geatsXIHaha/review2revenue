@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import './ChatPage.css'
 import { useGeolocation } from './hooks/useGeolocation';
@@ -45,6 +45,37 @@ function shortPreview(text) {
   const clean = (text || '').replace(/\s+/g, ' ').trim()
   if (clean.length <= 40) return clean || 'Untitled chat'
   return `${clean.slice(0, 40)}...`
+}
+
+function buildConversationRow(conversationId, lastMessage, updatedAt = new Date().toISOString()) {
+  return {
+    conversation_id: conversationId,
+    last_message: lastMessage || 'Untitled chat',
+    updated_at: updatedAt,
+  }
+}
+
+function mergeConversationRows(existingRows, incomingRows) {
+  const merged = new Map()
+  ;[...(Array.isArray(existingRows) ? existingRows : []), ...(Array.isArray(incomingRows) ? incomingRows : [])].forEach((conversation) => {
+    if (!conversation?.conversation_id) return
+    merged.set(conversation.conversation_id, conversation)
+  })
+
+  return Array.from(merged.values()).sort((left, right) => {
+    const leftTime = new Date(left.updated_at || 0).getTime()
+    const rightTime = new Date(right.updated_at || 0).getTime()
+    return rightTime - leftTime
+  })
+}
+
+function getPendingChatTransition() {
+  try {
+    const raw = sessionStorage.getItem('pendingChatTransition')
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
 }
 
 // ── Restaurant Card ────────────────────────────────────────────────────────────
@@ -172,104 +203,276 @@ function RestaurantCard({ restaurant }) {
 }
 
 // ── Main ChatPage ──────────────────────────────────────────────────────────────
-function ChatPage() {
-  const [role, setRole] = useState('diner')
+function ChatPage({ userProfile }) {
+  const userId = userProfile?.id || ''
+  const registeredRole = userProfile?.role || 'diner'
+  const role = registeredRole
   const [prompt, setPrompt] = useState('')
-  const [restaurantName, setRestaurantName] = useState('')
   const [externalReviewsText, setExternalReviewsText] = useState('')
-  const [restaurantOptions, setRestaurantOptions] = useState([])
-  const [showRestaurantDropdown, setShowRestaurantDropdown] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [chatMessages, setChatMessages] = useState([])
   const [conversationId, setConversationId] = useState('')
   const [conversations, setConversations] = useState([])
   const [error, setError] = useState('')
+  const [isTransitioning, setIsTransitioning] = useState(false)
+  const [isHistoryLoading, setIsHistoryLoading] = useState(false)
+  const transitionStartedRef = useRef(false)
+  const optimisticConversationIdRef = useRef('')
+  const historyRequestRef = useRef(0)
+  const threadRef = useRef(null)
+  const [vendorRestaurantName, setVendorRestaurantName] = useState('')
 
-  const { coords, cityName, error: locError, getLocation } = useGeolocation();
+  const { coords, cityName, error: locError } = useGeolocation();
   const roleExamples = role === 'diner' ? dinerExamples : vendorExamples
+
+  function navigateTo(path) {
+    if (window.location.pathname === path) return
+    window.history.pushState({}, '', path)
+    window.dispatchEvent(new PopStateEvent('popstate'))
+  }
+
+  function upsertConversationPreview(previousConversationId, nextConversationId, lastMessage, updatedAt) {
+    if (!nextConversationId) return
+    const row = buildConversationRow(nextConversationId, lastMessage, updatedAt)
+    setConversations((prev) => {
+      const filtered = prev.filter(
+        (conversation) => conversation.conversation_id !== previousConversationId && conversation.conversation_id !== nextConversationId,
+      )
+      return [row, ...filtered]
+    })
+  }
+
+  function setConversationRows(rows) {
+    setConversations((prev) => mergeConversationRows(prev, rows))
+  }
 
   async function fetchConversations(roleValue) {
     try {
-      const response = await fetch(`${API_BASE}/api/chat/conversations?role=${encodeURIComponent(roleValue)}&limit=100`)
+      if (!userId) return []
+      const response = await fetch(
+        `${API_BASE}/api/chat/conversations?role=${encodeURIComponent(roleValue)}&user_id=${encodeURIComponent(userId)}&limit=100`,
+      )
       if (!response.ok) return []
       return await response.json()
     } catch { return [] }
   }
 
-  async function fetchHistory(roleValue, convId) {
+  async function fetchHistory(roleValue, convId, requestId) {
     if (!convId) { setChatMessages([]); return }
-    try {
-      const response = await fetch(
-        `${API_BASE}/api/chat/history?conversation_id=${encodeURIComponent(convId)}&role=${encodeURIComponent(roleValue)}`,
-      )
-      if (!response.ok) { setChatMessages([]); return }
-      const data = await response.json()
-      const messages = (data.messages || []).map((m, index) => ({
-        id: `${convId}-${index}`,
-        sender: m.sender || 'assistant',
-        message: m.message || '',
-        restaurants: [],
-      }))
-      setChatMessages(messages)
-    } catch { setChatMessages([]) }
+    setIsHistoryLoading(true)
+    const pending = getPendingChatTransition()
+    const isPendingConversation = pending?.conversation_id === convId && pending?.role === role && pending?.user_id === userId
+    const maxAttempts = roleValue === 'vendor' ? 3 : 1
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      try {
+        const response = await fetch(
+          `${API_BASE}/api/chat/history?conversation_id=${encodeURIComponent(convId)}&role=${encodeURIComponent(roleValue)}`,
+        )
+        if (requestId !== historyRequestRef.current) return
+        if (!response.ok) {
+          break
+        }
+
+        const data = await response.json()
+        const messages = (data.messages || []).map((m, index) => ({
+          id: m.id ? `${convId}-${m.id}` : `${convId}-${index}`,
+          role: m.role === 'assistant' ? 'assistant' : 'user',
+          message: m.message || '',
+          restaurants: [],
+        }))
+
+        if (messages.length > 0) {
+          setChatMessages(messages)
+          setIsHistoryLoading(false)
+          return
+        }
+
+        if (isPendingConversation || convId === optimisticConversationIdRef.current) {
+          setIsHistoryLoading(false)
+          return
+        }
+
+        if (attempt < maxAttempts - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 220))
+        }
+      } catch {
+        if (attempt < maxAttempts - 1) {
+          await new Promise((resolve) => setTimeout(resolve, 220))
+        }
+      }
+    }
+
+    if (requestId === historyRequestRef.current && !isPendingConversation && convId !== optimisticConversationIdRef.current) {
+      setChatMessages([])
+    }
+    setIsHistoryLoading(false)
   }
 
   useEffect(() => {
+    const pending = getPendingChatTransition()
+    const pendingConversationId = pending?.conversation_id && pending?.role === role && pending?.user_id === userId ? pending.conversation_id : ''
+
     async function initRoleChats() {
       const rows = await fetchConversations(role)
-      setConversations(rows)
+      setConversationRows(rows)
+      if (pendingConversationId) {
+        optimisticConversationIdRef.current = pendingConversationId
+        setConversationId(pendingConversationId)
+        return
+      }
       if (rows.length > 0) setConversationId(rows[0].conversation_id)
       else setConversationId(createConversationId())
     }
     initRoleChats()
-  }, [role])
-
-  useEffect(() => { fetchHistory(role, conversationId) }, [role, conversationId])
+  }, [role, userId])
 
   useEffect(() => {
-    if (role !== 'vendor') { setRestaurantOptions([]); setShowRestaurantDropdown(false); return }
-    const value = restaurantName.trim()
-    if (value.length < 1) { setRestaurantOptions([]); setShowRestaurantDropdown(false); return }
-    const controller = new AbortController()
-    async function fetchOptions() {
+    if (isTransitioning && sessionStorage.getItem('pendingChatTransition')) {
+      return
+    }
+    const requestId = historyRequestRef.current + 1
+    historyRequestRef.current = requestId
+    fetchHistory(role, conversationId, requestId)
+  }, [role, conversationId, isTransitioning])
+
+  useEffect(() => {
+    if (!userId) return
+    const raw = sessionStorage.getItem('pendingChatTransition')
+    if (!raw) return
+
+    let pending
+    try {
+      pending = JSON.parse(raw)
+    } catch {
+      sessionStorage.removeItem('pendingChatTransition')
+      return
+    }
+
+    if (!pending?.question || !pending?.answer || !pending?.role || pending.user_id !== userId) {
+      sessionStorage.removeItem('pendingChatTransition')
+      return
+    }
+    if (pending.role !== role) {
+      sessionStorage.removeItem('pendingChatTransition')
+      return
+    }
+    if (transitionStartedRef.current) {
+      return
+    }
+
+    let cancelled = false
+    async function persistInitialInteraction() {
+      transitionStartedRef.current = true
+      setIsTransitioning(true)
+      setError('')
+      const pendingConversationId = pending.conversation_id || createConversationId()
+      optimisticConversationIdRef.current = pendingConversationId
+      const optimisticMessages = [
+        { id: `pending-u-${pendingConversationId}`, role: 'user', message: pending.question, restaurants: [] },
+        { id: `pending-a-${pendingConversationId}`, role: 'assistant', message: pending.answer, restaurants: [] },
+      ]
+      setConversationId(pendingConversationId)
+      setChatMessages(optimisticMessages)
+      upsertConversationPreview(pendingConversationId, pendingConversationId, pending.answer)
+      sessionStorage.setItem(
+        'pendingChatTransition',
+        JSON.stringify({ ...pending, conversation_id: pendingConversationId }),
+      )
+      try {
+        const response = await fetch(`${API_BASE}/api/chat/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversation_id: pendingConversationId,
+            user_id: userId,
+            role,
+            question: pending.question,
+            answer: pending.answer,
+          }),
+        })
+        if (!response.ok) throw new Error('Failed to initialize chat conversation.')
+
+        if (cancelled) return
+        const data = await response.json()
+        const persistedConversationId = data.conversation_id || pendingConversationId
+        setConversationId(persistedConversationId)
+          optimisticConversationIdRef.current = persistedConversationId
+          upsertConversationPreview(pendingConversationId, persistedConversationId, pending.answer, data.updated_at)
+        sessionStorage.removeItem('pendingChatTransition')
+
+        const rows = await fetchConversations(role)
+          if (!cancelled) setConversationRows(rows)
+      } catch (transitionError) {
+        if (!cancelled) setError(transitionError.message || 'Failed to initialize chat conversation.')
+        transitionStartedRef.current = false
+      } finally {
+        if (!cancelled) setIsTransitioning(false)
+      }
+    }
+
+    persistInitialInteraction()
+    return () => { cancelled = true }
+  }, [userId, role])
+
+  useEffect(() => {
+    if (threadRef.current) {
+      threadRef.current.scrollTop = threadRef.current.scrollHeight
+    }
+  }, [chatMessages, isLoading])
+
+  useEffect(() => {
+    if (role !== 'vendor' || !userProfile?.store_id) {
+      setVendorRestaurantName('')
+      return
+    }
+    let cancelled = false
+    async function fetchVendorRestaurant() {
       try {
         const response = await fetch(
-          `${API_BASE}/api/restaurants/search?query=${encodeURIComponent(value)}&limit=8`,
-          { signal: controller.signal },
+          `${API_BASE}/api/restaurants/by-store-id?store_id=${encodeURIComponent(userProfile.store_id)}`,
         )
         if (!response.ok) return
         const data = await response.json()
-        const options = data.restaurants || []
-        setRestaurantOptions(options)
-        setShowRestaurantDropdown(options.length > 0)
-      } catch { setRestaurantOptions([]); setShowRestaurantDropdown(false) }
+        if (!cancelled) {
+          setVendorRestaurantName(data?.restaurant?.name || '')
+        }
+      } catch {
+        if (!cancelled) setVendorRestaurantName('')
+      }
     }
-    fetchOptions()
-    return () => controller.abort()
-  }, [role, restaurantName])
+    fetchVendorRestaurant()
+    return () => {
+      cancelled = true
+    }
+  }, [role, userProfile?.store_id])
 
   async function handleSubmit(event) {
     event.preventDefault()
     if (!prompt.trim()) return
     setError('')
+    const submittedPrompt = prompt
 
-    if (role === 'vendor' && restaurantName.trim().length < 1) {
-      setError('Vendor role requires restaurant name.')
+    if (role === 'vendor' && !userId) {
+      setError('Vendor profile is still loading. Please try again in a moment.')
       return
     }
 
     const activeConversationId = conversationId || createConversationId()
     if (!conversationId) setConversationId(activeConversationId)
+    optimisticConversationIdRef.current = activeConversationId
 
     const externalReviews = externalReviewsText.split('\n').map((l) => l.trim()).filter((l) => l.length > 0)
-    const userMessage = { id: `u-${Date.now()}`, sender: 'user', message: prompt, restaurants: [] }
+    const userMessage = { id: `u-${Date.now()}`, role: 'user', message: submittedPrompt, restaurants: [] }
     setChatMessages((prev) => [...prev, userMessage])
+    setPrompt('')
+    upsertConversationPreview(activeConversationId, activeConversationId, submittedPrompt)
     setIsLoading(true)
 
     let locationPayload = {}
     if (role === 'diner' && coords) {
       locationPayload = { user_lat: coords.lat, user_lng: coords.lng, city_name: cityName }
-    } else if (role === 'diner' && isNearestIntent(prompt)) {
+    } else if (role === 'diner' && isNearestIntent(submittedPrompt)) {
       try {
         const loc = await getDeviceLocation()
         locationPayload = { user_lat: loc.lat, user_lng: loc.lng }
@@ -282,9 +485,10 @@ function ChatPage() {
     }
 
     const payload = {
-      role, prompt,
+      role, prompt: submittedPrompt,
       conversation_id: activeConversationId,
-      restaurant_name: restaurantName,
+      user_id: userId || undefined,
+      persist: true,
       external_reviews: role === 'vendor' && externalReviews.length > 0 ? externalReviews : undefined,
       ...locationPayload,
     }
@@ -303,17 +507,19 @@ function ChatPage() {
       // System prompt ensures AI only mentions restaurants from context_items
       const assistantMessage = {
         id: `a-${Date.now()}`,
-        sender: 'assistant',
+        role: 'assistant',
         message: data.answer || 'No answer returned by backend.',
         restaurants: Array.isArray(data.restaurants) ? data.restaurants : [],
       }
 
       setChatMessages((prev) => [...prev, assistantMessage])
-      setPrompt('')
+      const persistedConversationId = data.conversation_id || activeConversationId
+      setConversationId(persistedConversationId)
+      optimisticConversationIdRef.current = persistedConversationId
+      upsertConversationPreview(activeConversationId, persistedConversationId, data.answer || submittedPrompt, data.updated_at)
 
       const rows = await fetchConversations(role)
-      setConversations(rows)
-      if (data.conversation_id) setConversationId(data.conversation_id)
+      setConversationRows(rows)
     } catch (submitError) {
       setError(submitError.message)
       setChatMessages((prev) => prev.slice(0, Math.max(prev.length - 1, 0)))
@@ -323,10 +529,22 @@ function ChatPage() {
   }
 
   function handleNewChat() {
-    setConversationId(createConversationId())
+    const nextConversationId = createConversationId()
+    optimisticConversationIdRef.current = nextConversationId
+    setConversationId(nextConversationId)
     setChatMessages([])
     setPrompt('')
     setError('')
+    upsertConversationPreview(nextConversationId, nextConversationId, 'Untitled chat')
+  }
+
+  function handleComposeKeyDown(event) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault()
+      if (!isLoading && prompt.trim()) {
+        event.currentTarget.form?.requestSubmit()
+      }
+    }
   }
 
   const activeConversationLabel = useMemo(() => {
@@ -335,16 +553,15 @@ function ChatPage() {
   }, [conversations, conversationId])
 
   return (
-    <main className="chat-page">
+    <main className={role === 'vendor' ? 'chat-page chat-page--vendor' : 'chat-page'}>
       <aside className="chat-sidebar">
         <div className="chat-sidebar-header">
           <button type="button" className="chat-btn chat-btn--primary" onClick={handleNewChat}>+ New Chat</button>
-          <button type="button" className="chat-btn" onClick={() => { window.location.href = '/' }}>Back</button>
+          <button type="button" className="chat-btn" onClick={() => { navigateTo('/') }}>Back</button>
         </div>
 
-        <div className="chat-role-switch">
-          <button type="button" className={role === 'diner' ? 'chat-role active' : 'chat-role'} onClick={() => setRole('diner')}>User</button>
-          <button type="button" className={role === 'vendor' ? 'chat-role active' : 'chat-role'} onClick={() => setRole('vendor')}>Vendor</button>
+        <div className="chat-role-badge-wrap">
+          <span className="chat-role-badge">{role === 'vendor' ? 'Vendor' : 'Diner'}</span>
         </div>
 
         <ul className="conversation-list">
@@ -366,42 +583,25 @@ function ChatPage() {
       <section className="chat-main">
         <header className="chat-main-header">
           <h1>{activeConversationLabel}</h1>
-          <p>{role === 'vendor' ? 'Vendor assistant' : 'Food recommendation assistant'}</p>
+          <div className="chat-header-meta">
+            <p>{role === 'vendor' ? 'Vendor assistant' : 'Food recommendation assistant'}</p>
+            <span className="chat-role-badge">{role === 'vendor' ? 'Vendor' : 'Diner'}</span>
+            {role === 'vendor' && vendorRestaurantName ? (
+              <span className="restaurant-badge">{vendorRestaurantName}</span>
+            ) : null}
+          </div>
         </header>
 
-        {role === 'vendor' && (
-          <div className="vendor-inline">
-            <label>
-              Vendor Name
-              <div className="restaurant-search-wrap">
-                <input
-                  type="text" value={restaurantName}
-                  onChange={(e) => setRestaurantName(e.target.value)}
-                  onFocus={() => setShowRestaurantDropdown(restaurantOptions.length > 0)}
-                  onBlur={() => setTimeout(() => setShowRestaurantDropdown(false), 120)}
-                  placeholder="Type your restaurant name"
-                />
-                {showRestaurantDropdown && restaurantOptions.length > 0 && (
-                  <ul className="restaurant-dropdown" role="listbox">
-                    {restaurantOptions.map((option) => (
-                      <li key={option.store_id}>
-                        <button type="button" className="restaurant-option"
-                          onMouseDown={() => { setRestaurantName(option.name); setShowRestaurantDropdown(false) }}>
-                          <span>{option.name}</span>
-                          <small>{option.food_type}</small>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            </label>
-          </div>
-        )}
-
+        {isTransitioning && <p className="chat-error">Saving your initial Q&A and preparing chat...</p>}
         {error && <p className="chat-error">{error}</p>}
 
-        <div className="chat-thread">
+        <div className="chat-thread" ref={threadRef}>
+          {isHistoryLoading && chatMessages.length === 0 ? (
+            <div className="chat-empty">
+              <p>Loading previous messages...</p>
+            </div>
+          ) : null}
+
           {chatMessages.length === 0 && (
             <div className="chat-empty">
               <p>Start chatting. The AI will remember your previous turns in this conversation.</p>
@@ -416,12 +616,12 @@ function ChatPage() {
           {chatMessages.map((msg) => (
             <article
               key={msg.id}
-              className={msg.sender === 'user' ? 'thread-message thread-message--user' : 'thread-message thread-message--assistant'}
+              className={msg.role === 'user' ? 'thread-message thread-message--user' : 'thread-message thread-message--assistant'}
             >
-              <p className="thread-sender">{msg.sender === 'user' ? 'You' : 'AI'}</p>
+              <p className="thread-sender">{msg.role === 'assistant' ? 'AI' : 'You'}</p>
               <ReactMarkdown>{msg.message}</ReactMarkdown>
 
-              {msg.sender === 'assistant' && msg.restaurants && msg.restaurants.length > 0 && (
+              {msg.role === 'assistant' && msg.restaurants && msg.restaurants.length > 0 && (
                 <div style={{ marginTop: '12px' }}>
                   <p style={{
                     fontSize: '0.78rem', fontWeight: '700', color: '#888',
@@ -437,16 +637,16 @@ function ChatPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="chat-compose">
-          {role === 'diner' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-              
-              {locError && <span style={{ color: '#d9534f', fontSize: '0.85rem' }}>{locError}</span>}
-            </div>
-          )}
+          {role === 'diner' && locError ? <p className="chat-loc-error">{locError}</p> : null}
           <textarea rows={2} value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
+            onKeyDown={handleComposeKeyDown}
             placeholder="Send a message" required />
-          <button type="submit" className="chat-btn chat-btn--primary" disabled={isLoading}>
+          <button
+            type="submit"
+            className="chat-btn chat-btn--primary"
+            disabled={isLoading || (role === 'vendor' && !userId) || !prompt.trim()}
+          >
             {isLoading ? 'Sending...' : 'Send'}
           </button>
         </form>
