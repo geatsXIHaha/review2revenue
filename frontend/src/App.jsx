@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import { supabase } from './supabase'
 import './App.css'
 
 const API_BASE = 'http://localhost:8000'
@@ -58,6 +59,11 @@ function App({ userProfile }) {
   const [vendorReviews, setVendorReviews] = useState([])
   const [showVendorReviews, setShowVendorReviews] = useState(false)
   const [isLoadingVendorReviews, setIsLoadingVendorReviews] = useState(false)
+  
+  const [showInsertReviewModal, setShowInsertReviewModal] = useState(false)
+  const [csvFile, setCsvFile] = useState(null)
+  const [isInsertingReview, setIsInsertingReview] = useState(false)
+  const [insertReviewMessage, setInsertReviewMessage] = useState('')
 
   // Sync role with registeredRole whenever it changes
   useEffect(() => {
@@ -237,10 +243,229 @@ function App({ userProfile }) {
     return
   }
 
+  function parseCSV(text) {
+    const lines = [];
+    let currentLine = [];
+    let currentCell = "";
+    let inQuotes = false;
+    
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      if (inQuotes) {
+        if (char === '"') {
+          if (i + 1 < text.length && text[i + 1] === '"') {
+            currentCell += '"';
+            i++;
+          } else {
+            inQuotes = false;
+          }
+        } else {
+          currentCell += char;
+        }
+      } else {
+        if (char === '"') {
+          inQuotes = true;
+        } else if (char === ',') {
+          currentLine.push(currentCell.trim());
+          currentCell = "";
+        } else if (char === '\n' || char === '\r') {
+          if (char === '\r' && i + 1 < text.length && text[i + 1] === '\n') {
+            i++;
+          }
+          currentLine.push(currentCell.trim());
+          lines.push(currentLine);
+          currentLine = [];
+          currentCell = "";
+        } else {
+          currentCell += char;
+        }
+      }
+    }
+    if (currentCell || currentLine.length > 0) {
+      currentLine.push(currentCell.trim());
+      if (currentLine.length > 0 && currentLine.some(c => c)) {
+        lines.push(currentLine);
+      }
+    }
+    return lines.filter(l => l.length > 0 && l.some(c => c)); // filter empty lines
+  }
+
+  async function handleUploadCSV() {
+    if (!userProfile?.store_id) {
+      setInsertReviewMessage('Error: Store ID is missing.')
+      return
+    }
+    if (!csvFile) {
+      setInsertReviewMessage('Error: Please select a CSV file first.')
+      return
+    }
+    
+    setIsInsertingReview(true)
+    setInsertReviewMessage('')
+    
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const text = e.target.result;
+        const rows = parseCSV(text);
+        if (rows.length < 2) {
+           throw new Error('CSV file is empty or missing headers.');
+        }
+        
+        // Assume first row is headers
+        const headers = rows[0].map(h => h.toLowerCase());
+        const textIdx = headers.findIndex(h => h.includes('text') || h.includes('review') || h.includes('content'));
+        const ratingIdx = headers.findIndex(h => h.includes('overall_rating') || h.includes('rating'));
+        const foodRatingIdx = headers.findIndex(h => h.includes('food_rating'));
+        const riderRatingIdx = headers.findIndex(h => h.includes('rider_rating'));
+        const updatedIdx = headers.findIndex(h => h.includes('updated_at') || h.includes('date') || h.includes('time'));
+        
+        if (textIdx === -1 || ratingIdx === -1 || foodRatingIdx === -1) {
+           throw new Error('CSV must contain "review_text", "overall_rating", and "food_rating" columns.');
+        }
+        
+        const validRows = [];
+        const reviewsToPredict = [];
+        
+        for (let i = 1; i < rows.length; i++) {
+           const row = rows[i];
+           if (row.length <= Math.max(textIdx, ratingIdx, foodRatingIdx) || !row[textIdx]) continue;
+           
+           let overall_rating = parseFloat(row[ratingIdx]);
+           if (isNaN(overall_rating)) overall_rating = 5;
+           overall_rating = Math.max(1, Math.min(5, overall_rating));
+           
+           let food_rating = parseFloat(row[foodRatingIdx]);
+           if (isNaN(food_rating)) food_rating = 5;
+           food_rating = Math.max(1, Math.min(5, food_rating));
+           
+           let rider_rating = null;
+           if (riderRatingIdx !== -1 && row[riderRatingIdx]) {
+             const parsed = parseFloat(row[riderRatingIdx]);
+             if (!isNaN(parsed)) {
+               rider_rating = Math.max(1, Math.min(5, parsed));
+             }
+           }
+           
+           let updated_at = new Date().toISOString();
+           if (updatedIdx !== -1 && row[updatedIdx]) {
+             const parsedDate = new Date(row[updatedIdx]);
+             if (!isNaN(parsedDate.getTime())) {
+               updated_at = parsedDate.toISOString();
+             }
+           }
+           
+           const reviewText = row[textIdx];
+           
+           validRows.push({
+             store_id: userProfile.store_id,
+             review_text: reviewText,
+             overall_rating: overall_rating,
+             food_rating: food_rating,
+             rider_rating: rider_rating,
+             updated_at: updated_at
+           });
+           
+           reviewsToPredict.push(reviewText);
+        }
+        
+        if (validRows.length === 0) {
+           throw new Error('No valid reviews found in the CSV.');
+        }
+        
+        if (validRows.length > 500) {
+           validRows.length = 500;
+           reviewsToPredict.length = 500;
+        }
+
+        setInsertReviewMessage('Analyzing sentiment...');
+        
+        let predictedSentiments = [];
+        try {
+          const res = await fetch(`${API_BASE}/api/sentiment/predict-batch`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ reviews: reviewsToPredict })
+          });
+          
+          if (res.ok) {
+            const data = await res.json();
+            predictedSentiments = data.predictions || [];
+          } else {
+            console.warn('Batch sentiment prediction failed, falling back to unknown');
+            predictedSentiments = new Array(reviewsToPredict.length).fill('unknown');
+          }
+        } catch (err) {
+          console.warn('Network error during sentiment prediction', err);
+          predictedSentiments = new Array(reviewsToPredict.length).fill('unknown');
+        }
+        
+        const recordsToInsert = validRows.map((r, idx) => {
+          const sent = predictedSentiments[idx] || 'unknown';
+          return {
+            ...r,
+            sentiment: sent,
+            sentiment_model: sent
+          };
+        });
+
+        setInsertReviewMessage('Saving to database...');
+
+        const { error } = await supabase
+          .from('reviews')
+          .insert(recordsToInsert)
+          
+        if (error) {
+           if (error.message && error.message.includes('review_text')) {
+             const fallbackRecords = recordsToInsert.map(r => {
+                const { review_text, ...rest } = r;
+                return { ...rest, text: review_text };
+             });
+             const { error: err2 } = await supabase.from('reviews').insert(fallbackRecords);
+             if (err2) throw err2;
+           } else {
+             throw error;
+           }
+        }
+        
+        setInsertReviewMessage(`Success: ${recordsToInsert.length} reviews uploaded!`)
+        setCsvFile(null)
+        const fileInput = document.getElementById('csv-upload-input');
+        if (fileInput) fileInput.value = '';
+        
+        const mappedForLocal = recordsToInsert.map(r => ({
+           text: r.review_text || r.text,
+           overall_rating: r.overall_rating,
+           sentiment: r.sentiment,
+           updated_at: r.updated_at
+        }));
+        
+        setVendorReviews(prev => {
+          const combined = [...mappedForLocal, ...prev];
+          combined.sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
+          return combined;
+        });
+        
+      } catch (err) {
+        setInsertReviewMessage(`Error: ${err.message}`)
+      } finally {
+        setIsInsertingReview(false)
+      }
+    };
+    reader.onerror = () => {
+      setInsertReviewMessage('Error: Failed to read file.');
+      setIsInsertingReview(false);
+    };
+    reader.readAsText(csvFile);
+  }
+
   async function handleToggleVendorReviews() {
     if (showVendorReviews) {
       setShowVendorReviews(false)
       return
+    }
+    if (showInsertReviewModal) {
+      setShowInsertReviewModal(false)
     }
     if (!userProfile?.store_id) {
       setError('Unable to load reviews: store id is missing.')
@@ -439,7 +664,7 @@ function App({ userProfile }) {
                 />
               </label>
 
-              <div className="actions">
+              <div className="actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
                 <button type="submit" className="primary" disabled={isLoading}>
                   {isLoading ? 'Generating...' : 'Generate AI Answer'}
                 </button>
@@ -451,7 +676,81 @@ function App({ userProfile }) {
                 >
                   {isLoadingVendorReviews ? 'Loading...' : showVendorReviews ? 'Hide Reviews' : 'Reviews'}
                 </button>
+                <button
+                  type="button"
+                  className="primary secondary"
+                  onClick={() => {
+                    setShowInsertReviewModal(!showInsertReviewModal);
+                    if (!showInsertReviewModal && showVendorReviews) {
+                       setShowVendorReviews(false);
+                    }
+                  }}
+                  disabled={!vendorRestaurant}
+                >
+                  {showInsertReviewModal ? 'Close Upload' : 'Insert Reviews'}
+                </button>
               </div>
+
+              {showInsertReviewModal && (
+                <div style={{
+                  marginTop: '15px',
+                  padding: '20px',
+                  background: 'rgba(255, 255, 255, 0.95)',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(100, 200, 150, 0.4)',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.05)'
+                }}>
+                  <h3 style={{ marginTop: 0, marginBottom: '5px', color: '#333' }}>Upload Reviews (CSV)</h3>
+                  <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '15px' }}>
+                    CSV must include <strong>"review_text"</strong>, <strong>"overall_rating"</strong>, and <strong>"food_rating"</strong> headers. <strong>"rider_rating"</strong> is optional. Max 500 reviews.
+                  </p>
+                  
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{
+                      padding: '15px', 
+                      border: '2px dashed #ccc', 
+                      borderRadius: '8px',
+                      background: '#fafafa',
+                      display: 'flex',
+                      alignItems: 'center'
+                    }}>
+                      <input 
+                        id="csv-upload-input"
+                        type="file" 
+                        accept=".csv"
+                        onChange={(e) => setCsvFile(e.target.files && e.target.files[0])}
+                        disabled={isInsertingReview}
+                        style={{ flex: 1 }}
+                      />
+                    </div>
+                    
+                    {insertReviewMessage && (
+                      <p style={{ 
+                        margin: 0, 
+                        padding: '8px 12px', 
+                        borderRadius: '6px',
+                        background: insertReviewMessage.startsWith('Error') ? '#ffebee' : '#e8f5e9',
+                        color: insertReviewMessage.startsWith('Error') ? '#c62828' : '#2e7d32',
+                        fontWeight: '500'
+                      }}>
+                        {insertReviewMessage}
+                      </p>
+                    )}
+                    
+                    <div style={{ marginTop: '5px' }}>
+                      <button 
+                        type="button" 
+                        className="primary"
+                        onClick={handleUploadCSV}
+                        disabled={isInsertingReview || !csvFile}
+                        style={{ minWidth: '120px' }}
+                      >
+                        {isInsertingReview ? 'Uploading...' : 'Upload CSV'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {showVendorReviews ? (
                 <section className="vendor-reviews" aria-live="polite">

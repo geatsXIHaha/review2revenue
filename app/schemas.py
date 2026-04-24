@@ -35,3 +35,6 @@ class ConversationSummary(BaseModel):
     last_message: str
     restaurant_name: Optional[str] = None
     updated_at: str
+
+class PredictBatchRequest(BaseModel):
+    reviews: List[str]
