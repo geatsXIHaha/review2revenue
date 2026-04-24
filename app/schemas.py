@@ -1,27 +1,26 @@
-from typing import List, Literal, Optional
-
+from typing import Any, List, Literal, Optional
 from pydantic import BaseModel, Field
-
 
 Role = Literal["diner", "vendor"]
 
 
 class AskRequest(BaseModel):
-    role: Role
+    role: str
     prompt: str = Field(min_length=3, max_length=2000)
     conversation_id: Optional[str] = Field(default=None, max_length=128)
     restaurant_name: Optional[str] = None
     external_reviews: Optional[List[str]] = None
-    # Optional user location (WGS84) for distance hints in recommendations
     user_lat: Optional[float] = None
     user_lng: Optional[float] = None
+    city_name: Optional[str] = None
 
 
 class AskResponse(BaseModel):
     answer: str
     conversation_id: Optional[str] = None
-    source: Literal["database", "external_reviews", "mixed", "fallback"]
+    source: str
     confidence: float = Field(ge=0.0, le=1.0)
+    restaurants: Optional[List[Any]] = None
 
 
 class ChatHistoryResponse(BaseModel):

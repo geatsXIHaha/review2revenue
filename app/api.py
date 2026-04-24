@@ -917,6 +917,7 @@ def ask(payload: AskRequest) -> AskResponse:
     raise HTTPException(status_code=400, detail="Unsupported role")
 
 
+
 @app.get("/api/chat/history", response_model=ChatHistoryResponse)
 def chat_history(conversation_id: str, role: str) -> ChatHistoryResponse:
     if role not in {"diner", "vendor"}:
@@ -1098,8 +1099,7 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
     save_chat_message(conversation_id, payload.role, "user", payload.prompt, payload.restaurant_name)
     save_chat_message(conversation_id, payload.role, "assistant", answer, payload.restaurant_name)
 
-    return AskResponse(answer=answer, conversation_id=conversation_id, source="database", confidence=0.82)
-
+    return AskResponse(answer=answer, conversation_id=conversation_id, source="database", confidence=0.82, restaurants=context_items)
 
 def _handle_vendor(payload: AskRequest, conversation_id: str, history: List[Dict]) -> AskResponse:
     vendor_intent = _detect_vendor_intent(payload.prompt)
@@ -1284,3 +1284,4 @@ def _simple_sentiment_summary(reviews: List[str]) -> Dict[str, float]:
         "neutral_ratio": round(max(total - pos - neg, 0) / total, 3),
         "model_confidence": 0.35,
     }
+
