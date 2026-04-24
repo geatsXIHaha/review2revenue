@@ -940,7 +940,33 @@ async def upload_menu(
         print(f"Upload error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/api/reviews/upload-csv")
+async def upload_reviews_csv(file: UploadFile = File(...), store_id: str = Form(...)):
+    try:
+        # 1. Read the uploaded CSV
+        contents = await file.read()
+        df = pd.read_csv(io.StringIO(contents.decode('utf-8')))
 
+        # 2. Basic Validation (Check if required columns exist)
+        required_cols = ['review_text', 'overall_rating', 'food_rating']
+        if not all(col in df.columns for col in required_cols):
+            raise HTTPException(status_code=400, detail="Missing required CSV columns")
+
+        # 3. Add the store_id and timestamps
+        df['store_id'] = store_id
+        # Add any other cleaning logic here...
+
+        # 4. Convert to list of dicts for Supabase insertion
+        records = df.to_dict(orient='records')
+        
+        # 5. Insert into Supabase (Assuming you have a supabase client initialized)
+        # response = supabase.table('reviews').insert(records).execute()
+
+        return {"message": "Success", "inserted_count": len(records)}
+
+    except Exception as e:
+        print(f"CRASH ERROR: {str(e)}") # This will show up in your terminal!
+        raise HTTPException(status_code=500, detail=str(e))
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
 def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]) -> AskResponse:

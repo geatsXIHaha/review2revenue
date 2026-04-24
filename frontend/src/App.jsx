@@ -59,7 +59,58 @@ function App({ userProfile }) {
   const [vendorReviews, setVendorReviews] = useState([])
   const [showVendorReviews, setShowVendorReviews] = useState(false)
   const [isLoadingVendorReviews, setIsLoadingVendorReviews] = useState(false)
+ // Missing Review States
+  const [showInsertReviewModal, setShowInsertReviewModal] = useState(false);
+  const [isInsertingReview, setIsInsertingReview] = useState(false);
+  const [insertReviewStatus, setInsertReviewStatus] = useState('');
+  // Missing state for the AI restaurant cards
+  const [recommendedRestaurants, setRecommendedRestaurants] = useState([])
 
+  // Missing states for the CSV Review upload
+  const [csvFile, setCsvFile] = useState(null);
+  const [insertReviewMessage, setInsertReviewMessage] = useState('');
+
+  // Missing Menu Upload States
+  const [menuFile, setMenuFile] = useState(null);
+  const [uploadStatus, setUploadStatus] = useState('');
+  const [isLoadingUpload, setIsLoadingUpload] = useState(false);
+
+  const handleUploadCSV = async () => {
+    if (!csvFile || !userProfile?.store_id) {
+      setInsertReviewMessage("Error: Please select a file and ensure you are logged in.");
+      return;
+    }
+
+    setIsInsertingReview(true);
+    setInsertReviewMessage("Uploading reviews...");
+
+    const formData = new FormData();
+    formData.append("file", csvFile);
+    formData.append("store_id", userProfile.store_id);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/reviews/upload-csv`, {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (response.ok) {
+        setInsertReviewMessage(`✅ Success: ${data.inserted_count} reviews added!`);
+        setCsvFile(null);
+        // Refresh the list so the new reviews show up
+        handleToggleVendorReviews(); 
+      } else {
+        setInsertReviewMessage(`❌ Error: ${data.detail || "Failed to upload"}`);
+      }
+    } catch (err) {
+      console.error("Upload error:", err);
+      setInsertReviewMessage("❌ Error: Connection to backend failed.");
+    } finally {
+      setIsInsertingReview(false);
+    }
+  };
   // Sync role with registeredRole whenever it changes
   useEffect(() => {
     setRole(registeredRole)
