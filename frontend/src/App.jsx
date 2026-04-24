@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import { supabase } from './supabase'
 import './App.css'
 
 const API_BASE = 'http://localhost:8000'
@@ -58,14 +59,6 @@ function App({ userProfile }) {
   const [vendorReviews, setVendorReviews] = useState([])
   const [showVendorReviews, setShowVendorReviews] = useState(false)
   const [isLoadingVendorReviews, setIsLoadingVendorReviews] = useState(false)
-  
-  // --- ADDED THIS: State to hold the recommended restaurants ---
-  const [recommendedRestaurants, setRecommendedRestaurants] = useState([])
-
-  // --- MENU UPLOAD STATES ---
-  const [menuFile, setMenuFile] = useState(null);
-  const [uploadStatus, setUploadStatus] = useState('');
-  const [isLoadingUpload, setIsLoadingUpload] = useState(false);
 
   // Sync role with registeredRole whenever it changes
   useEffect(() => {
@@ -239,10 +232,18 @@ function App({ userProfile }) {
     }
   }
 
+  function handleRoleChange(nextRole) {
+    // Role is locked after registration - cannot be changed
+    return
+  }
+
   async function handleToggleVendorReviews() {
     if (showVendorReviews) {
       setShowVendorReviews(false)
       return
+    }
+    if (showInsertReviewModal) {
+      setShowInsertReviewModal(false)
     }
     if (!userProfile?.store_id) {
       setError('Unable to load reviews: store id is missing.')
@@ -486,7 +487,7 @@ function App({ userProfile }) {
                 />
               </label>
 
-              <div className="actions">
+              <div className="actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
                 <button type="submit" className="primary" disabled={isLoading}>
                   {isLoading ? 'Generating...' : 'Generate AI Answer'}
                 </button>
@@ -498,7 +499,81 @@ function App({ userProfile }) {
                 >
                   {isLoadingVendorReviews ? 'Loading...' : showVendorReviews ? 'Hide Reviews' : 'Reviews'}
                 </button>
+                <button
+                  type="button"
+                  className="primary secondary"
+                  onClick={() => {
+                    setShowInsertReviewModal(!showInsertReviewModal);
+                    if (!showInsertReviewModal && showVendorReviews) {
+                       setShowVendorReviews(false);
+                    }
+                  }}
+                  disabled={!vendorRestaurant}
+                >
+                  {showInsertReviewModal ? 'Close Upload' : 'Insert Reviews'}
+                </button>
               </div>
+
+              {showInsertReviewModal && (
+                <div style={{
+                  marginTop: '15px',
+                  padding: '20px',
+                  background: 'rgba(255, 255, 255, 0.95)',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(100, 200, 150, 0.4)',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.05)'
+                }}>
+                  <h3 style={{ marginTop: 0, marginBottom: '5px', color: '#333' }}>Upload Reviews (CSV)</h3>
+                  <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '15px' }}>
+                    CSV must include <strong>"review_text"</strong>, <strong>"overall_rating"</strong>, and <strong>"food_rating"</strong> headers. <strong>"rider_rating"</strong> is optional. Max 500 reviews.
+                  </p>
+                  
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{
+                      padding: '15px', 
+                      border: '2px dashed #ccc', 
+                      borderRadius: '8px',
+                      background: '#fafafa',
+                      display: 'flex',
+                      alignItems: 'center'
+                    }}>
+                      <input 
+                        id="csv-upload-input"
+                        type="file" 
+                        accept=".csv"
+                        onChange={(e) => setCsvFile(e.target.files && e.target.files[0])}
+                        disabled={isInsertingReview}
+                        style={{ flex: 1 }}
+                      />
+                    </div>
+                    
+                    {insertReviewMessage && (
+                      <p style={{ 
+                        margin: 0, 
+                        padding: '8px 12px', 
+                        borderRadius: '6px',
+                        background: insertReviewMessage.startsWith('Error') ? '#ffebee' : '#e8f5e9',
+                        color: insertReviewMessage.startsWith('Error') ? '#c62828' : '#2e7d32',
+                        fontWeight: '500'
+                      }}>
+                        {insertReviewMessage}
+                      </p>
+                    )}
+                    
+                    <div style={{ marginTop: '5px' }}>
+                      <button 
+                        type="button" 
+                        className="primary"
+                        onClick={handleUploadCSV}
+                        disabled={isInsertingReview || !csvFile}
+                        style={{ minWidth: '120px' }}
+                      >
+                        {isInsertingReview ? 'Uploading...' : 'Upload CSV'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {showVendorReviews ? (
                 <section className="vendor-reviews" aria-live="polite">

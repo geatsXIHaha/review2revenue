@@ -24,7 +24,7 @@ from .repository import (
     save_chat_message,
     search_restaurants_by_name,
 )
-from .schemas import AskRequest, AskResponse, ChatHistoryResponse, ConversationSummary
+from .schemas import AskRequest, AskResponse, ChatHistoryResponse, ConversationSummary, PredictBatchRequest
 from .sentiment_model import get_sentiment_engine_status, predict_sentiment_summary
 from .zai_client import ZAIClient
 
@@ -860,6 +860,13 @@ def get_reviews_by_store_id(
 @app.get("/api/sentiment/engine")
 def sentiment_engine() -> Dict[str, str]:
     return {"engine": get_sentiment_engine_status()}
+
+
+@app.post("/api/sentiment/predict-batch")
+def predict_batch(req: PredictBatchRequest) -> Dict[str, List[str]]:
+    from .sentiment_model import predict_sentiments_batch
+    preds = predict_sentiments_batch(req.reviews)
+    return {"predictions": preds}
 
 
 @app.post("/api/ask", response_model=AskResponse)
