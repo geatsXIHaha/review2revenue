@@ -9,6 +9,63 @@ from .config import DB_URL
 
 engine: Engine = create_engine(DB_URL)
 
+# Columns that exist on public.restaurants (no review_count in schema).
+_RESTAURANT_SELECT_SQL = """
+    SELECT
+        store_id,
+        name,
+        food_type,
+        avg_rating,
+        google_place_id,
+        google_formatted_address,
+        google_price_tier,
+        google_lat,
+        google_lng,
+        google_website,
+        google_phone,
+        operating_hours_monday,
+        operating_hours_tuesday,
+        operating_hours_wednesday,
+        operating_hours_thursday,
+        operating_hours_friday,
+        operating_hours_saturday,
+        operating_hours_sunday,
+        operating_hours_by_day_json
+    FROM restaurants
+"""
+
+_RESTAURANT_ROW_KEYS = [
+    "store_id",
+    "name",
+    "food_type",
+    "avg_rating",
+    "google_place_id",
+    "google_formatted_address",
+    "google_price_tier",
+    "google_lat",
+    "google_lng",
+    "google_website",
+    "google_phone",
+    "operating_hours_monday",
+    "operating_hours_tuesday",
+    "operating_hours_wednesday",
+    "operating_hours_thursday",
+    "operating_hours_friday",
+    "operating_hours_saturday",
+    "operating_hours_sunday",
+    "operating_hours_by_day_json",
+]
+
+
+def _row_from_csv_record(rec: Dict) -> Dict:
+    out: Dict = {}
+    for k in _RESTAURANT_ROW_KEYS:
+        v = rec.get(k)
+        if v is not None and pd.isna(v):
+            v = None
+        out[k] = v
+    return out
+
 
 def _ensure_chat_messages_table() -> None:
     query = text(
@@ -140,19 +197,16 @@ def _load_restaurants_from_csv() -> List[Dict]:
         if col not in df.columns:
             return []
 
-    if "review_count" not in df.columns:
-        df["review_count"] = 0
-
-    return df[["store_id", "name", "food_type", "avg_rating", "review_count"]].to_dict(orient="records")
+    records = df.to_dict(orient="records")
+    return [_row_from_csv_record(r) for r in records]
 
 
 def find_restaurant_by_name(name: str) -> Optional[Dict]:
     query = text(
-        """
-        SELECT store_id, name, food_type, avg_rating, COALESCE(review_count, 0) AS review_count
-        FROM restaurants
+        _RESTAURANT_SELECT_SQL
+        + """
         WHERE LOWER(name) LIKE LOWER(:name)
-        ORDER BY avg_rating DESC
+        ORDER BY avg_rating DESC NULLS LAST
         LIMIT 1
         """
     )
@@ -171,9 +225,8 @@ def find_restaurant_by_name(name: str) -> Optional[Dict]:
 def find_restaurant_by_store_id(store_id: str) -> Optional[Dict]:
     """Find a restaurant by its store_id"""
     query = text(
-        """
-        SELECT store_id, name, food_type, avg_rating, COALESCE(review_count, 0) AS review_count
-        FROM restaurants
+        _RESTAURANT_SELECT_SQL
+        + """
         WHERE store_id = :store_id
         LIMIT 1
         """
@@ -183,7 +236,6 @@ def find_restaurant_by_store_id(store_id: str) -> Optional[Dict]:
             row = conn.execute(query, {"store_id": store_id}).mappings().first()
         return dict(row) if row else None
     except Exception:
-        # Fallback to CSV
         for row in _load_restaurants_from_csv():
             if row.get("store_id") == store_id:
                 return row
@@ -192,9 +244,8 @@ def find_restaurant_by_store_id(store_id: str) -> Optional[Dict]:
 
 def list_restaurants(limit: int = 40) -> List[Dict]:
     query = text(
-        """
-        SELECT store_id, name, food_type, avg_rating, COALESCE(review_count, 0) AS review_count
-        FROM restaurants
+        _RESTAURANT_SELECT_SQL
+        + """
         ORDER BY avg_rating DESC NULLS LAST
         LIMIT :limit
         """
@@ -211,9 +262,8 @@ def list_restaurants(limit: int = 40) -> List[Dict]:
 
 def search_restaurants_by_name(query_text: str, limit: int = 8) -> List[Dict]:
     query = text(
-        """
-        SELECT store_id, name, food_type, avg_rating, COALESCE(review_count, 0) AS review_count
-        FROM restaurants
+        _RESTAURANT_SELECT_SQL
+        + """
         WHERE LOWER(name) LIKE LOWER(:query)
         ORDER BY avg_rating DESC NULLS LAST, name ASC
         LIMIT :limit
@@ -227,24 +277,10 @@ def search_restaurants_by_name(query_text: str, limit: int = 8) -> List[Dict]:
             ).mappings().all()
         return [dict(row) for row in rows]
     except Exception:
-        csv_path = _restaurants_csv_path()
-        if not csv_path.exists():
-            return []
-
-        df = pd.read_csv(csv_path)
-        if "name" not in df.columns:
-            return []
-
-        mask = df["name"].astype(str).str.lower().str.contains(query_text.lower(), na=False)
-        if "food_type" not in df.columns:
-            df["food_type"] = None
-        if "avg_rating" not in df.columns:
-            df["avg_rating"] = None
-        if "review_count" not in df.columns:
-            df["review_count"] = 0
-
-        filtered = df.loc[mask, ["store_id", "name", "food_type", "avg_rating", "review_count"]].head(limit)
-        return filtered.to_dict(orient="records")
+        q = query_text.lower()
+        rows = [r for r in _load_restaurants_from_csv() if q in str(r.get("name", "")).lower()]
+        rows.sort(key=lambda x: float(x.get("avg_rating") or 0.0), reverse=True)
+        return rows[:limit]
 
 
 def get_metrics_for_store_ids(store_ids: List[str]) -> Dict[str, Dict]:
@@ -295,3 +331,111 @@ def get_recent_reviews(store_id: str, limit: int = 12) -> List[Dict]:
             if field not in filtered.columns:
                 filtered[field] = None
         return filtered[fields].to_dict(orient="records")
+
+
+def _normalize_keyword_terms(keywords: List[str], max_terms: int = 10) -> List[str]:
+    seen: set = set()
+    out: List[str] = []
+    for raw in keywords:
+        t = (raw or "").strip().lower()
+        if len(t) < 2 or t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+        if len(out) >= max_terms:
+            break
+    return out
+
+
+def get_reviews_by_keywords(store_id: str, keywords: List[str], limit: int = 8) -> List[Dict]:
+    terms = _normalize_keyword_terms(keywords)
+    if not terms:
+        return []
+
+    or_clauses: List[str] = []
+    params: Dict = {"store_id": store_id, "limit": limit}
+    for i, term in enumerate(terms):
+        key = f"k{i}"
+        or_clauses.append(f"LOWER(COALESCE(review_text, '')) LIKE :{key}")
+        params[key] = f"%{term}%"
+
+    sql = f"""
+        SELECT review_text, overall_rating, sentiment, updated_at
+        FROM reviews
+        WHERE store_id = :store_id AND ({' OR '.join(or_clauses)})
+        ORDER BY updated_at DESC NULLS LAST
+        LIMIT :limit
+    """
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(sql), params).mappings().all()
+        return [dict(row) for row in rows]
+    except Exception:
+        csv_path = _reviews_csv_path()
+        if not csv_path.exists():
+            return []
+
+        df = pd.read_csv(csv_path)
+        if "store_id" not in df.columns or "review_text" not in df.columns:
+            return []
+
+        sub = df[df["store_id"].astype(str) == str(store_id)].copy()
+        if sub.empty:
+            return []
+
+        def matches(txt: str) -> bool:
+            low = str(txt).lower()
+            return any(term in low for term in terms)
+
+        sub = sub[sub["review_text"].astype(str).apply(matches)]
+        sub = sub.head(limit)
+        fields = ["review_text", "overall_rating", "sentiment", "updated_at"]
+        for field in fields:
+            if field not in sub.columns:
+                sub[field] = None
+        return sub[fields].to_dict(orient="records")
+
+
+def count_reviews_matching_keywords(store_ids: List[str], keywords: List[str]) -> Dict[str, int]:
+    terms = _normalize_keyword_terms(keywords)
+    if not store_ids or not terms:
+        return {}
+
+    or_clauses: List[str] = []
+    params: Dict = {"store_ids": store_ids}
+    for i, term in enumerate(terms):
+        key = f"k{i}"
+        or_clauses.append(f"LOWER(COALESCE(review_text, '')) LIKE :{key}")
+        params[key] = f"%{term}%"
+
+    sql = f"""
+        SELECT store_id, COUNT(*) AS cnt
+        FROM reviews
+        WHERE store_id = ANY(:store_ids) AND ({' OR '.join(or_clauses)})
+        GROUP BY store_id
+    """
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(text(sql), params).mappings().all()
+        return {str(row["store_id"]): int(row["cnt"]) for row in rows}
+    except Exception:
+        csv_path = _reviews_csv_path()
+        if not csv_path.exists():
+            return {}
+
+        df = pd.read_csv(csv_path)
+        if "store_id" not in df.columns or "review_text" not in df.columns:
+            return {}
+
+        id_set = {str(x) for x in store_ids}
+        sub = df[df["store_id"].astype(str).isin(id_set)]
+        counts: Dict[str, int] = {}
+        for sid, grp in sub.groupby(sub["store_id"].astype(str)):
+            c = 0
+            for txt in grp["review_text"].astype(str):
+                low = txt.lower()
+                if any(term in low for term in terms):
+                    c += 1
+            if c:
+                counts[str(sid)] = c
+        return counts

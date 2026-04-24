@@ -4,6 +4,32 @@ import './ChatPage.css'
 
 const API_BASE = 'http://localhost:8000'
 
+function isNearestIntent(text) {
+  const q = String(text || '').toLowerCase()
+  return ['nearest', 'closest', 'near me', 'nearby', 'paling dekat', 'dekat sini'].some((k) => q.includes(k))
+}
+
+function getDeviceLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('Geolocation is not supported by this browser.'))
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        })
+      },
+      (err) => {
+        reject(new Error(err?.message || 'Unable to get location permission.'))
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
+    )
+  })
+}
+
 const dinerExamples = [
   'I want to eat nasi lemak',
   'I want a cheap restaurant near me',
@@ -168,12 +194,26 @@ function ChatPage() {
     setChatMessages((prev) => [...prev, userMessage])
     setIsLoading(true)
 
+    let locationPayload = {}
+    if (role === 'diner' && isNearestIntent(prompt)) {
+      try {
+        const loc = await getDeviceLocation()
+        locationPayload = { user_lat: loc.lat, user_lng: loc.lng }
+      } catch (locError) {
+        setError(`Location is required for nearest queries. ${locError.message}`)
+        setChatMessages((prev) => prev.slice(0, Math.max(prev.length - 1, 0)))
+        setIsLoading(false)
+        return
+      }
+    }
+
     const payload = {
       role,
       prompt,
       conversation_id: activeConversationId,
       restaurant_name: restaurantName,
       external_reviews: role === 'vendor' && externalReviews.length > 0 ? externalReviews : undefined,
+      ...locationPayload,
     }
 
     try {

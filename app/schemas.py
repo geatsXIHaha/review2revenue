@@ -12,6 +12,9 @@ class AskRequest(BaseModel):
     conversation_id: Optional[str] = Field(default=None, max_length=128)
     restaurant_name: Optional[str] = None
     external_reviews: Optional[List[str]] = None
+    # Optional user location (WGS84) for distance hints in recommendations
+    user_lat: Optional[float] = None
+    user_lng: Optional[float] = None
 
 
 class AskResponse(BaseModel):
