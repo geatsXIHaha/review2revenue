@@ -58,20 +58,26 @@ function App({ userProfile }) {
   const [vendorReviews, setVendorReviews] = useState([])
   const [showVendorReviews, setShowVendorReviews] = useState(false)
   const [isLoadingVendorReviews, setIsLoadingVendorReviews] = useState(false)
+  
+  // --- ADDED THIS: State to hold the recommended restaurants ---
+  const [recommendedRestaurants, setRecommendedRestaurants] = useState([])
+
+  // --- MENU UPLOAD STATES ---
+  const [menuFile, setMenuFile] = useState(null);
+  const [uploadStatus, setUploadStatus] = useState('');
+  const [isLoadingUpload, setIsLoadingUpload] = useState(false);
 
   // Sync role with registeredRole whenever it changes
   useEffect(() => {
     setRole(registeredRole)
-    // Also update prompt when role changes
     setPrompt(registeredRole === 'vendor' ? vendorExamples[0] : dinerExamples[0])
   }, [registeredRole])
 
-  // Fetch vendor's restaurant info if they're a vendor
+  // Fetch vendor's restaurant info
   useEffect(() => {
     if (registeredRole === 'vendor' && userProfile?.store_id) {
       async function fetchVendorRestaurant() {
         try {
-          // Fetch the restaurant directly by store_id
           const response = await fetch(
             `${API_BASE}/api/restaurants/by-store-id?store_id=${userProfile.store_id}`,
           )
@@ -88,7 +94,6 @@ function App({ userProfile }) {
           }
         } catch (err) {
           console.error('Error fetching vendor restaurant:', err)
-          // Fallback: set placeholder
           const fallbackName = `Restaurant ${userProfile.store_id}`
           setVendorRestaurant({
             store_id: userProfile.store_id,
@@ -147,15 +152,12 @@ function App({ userProfile }) {
 
   useEffect(() => {
     const controller = new AbortController()
-
     async function fetchSentimentEngine() {
       try {
         const response = await fetch(`${API_BASE}/api/sentiment/engine`, {
           signal: controller.signal,
         })
-        if (!response.ok) {
-          return
-        }
+        if (!response.ok) return
         const data = await response.json()
         if (data.engine) {
           setSentimentEngine(data.engine)
@@ -166,7 +168,6 @@ function App({ userProfile }) {
         }
       }
     }
-
     fetchSentimentEngine()
     return () => controller.abort()
   }, [])
@@ -176,6 +177,7 @@ function App({ userProfile }) {
     setIsLoading(true)
     setError('')
     setResponseMeta(null)
+    setRecommendedRestaurants([]) // Reset previous restaurants on new search
 
     if (role === 'vendor' && restaurantName.trim().length < 1) {
       setError('Vendor role requires restaurant name so analysis uses your restaurant data.')
@@ -199,7 +201,6 @@ function App({ userProfile }) {
       role,
       prompt,
       restaurant_name: restaurantName,
-      // For vendors, include store_id so backend can fetch correct restaurant data
       ...(role === 'vendor' && userProfile?.store_id && { store_id: userProfile.store_id }),
       ...locationPayload,
     }
@@ -223,6 +224,12 @@ function App({ userProfile }) {
         source: data.source || 'unknown',
         confidence: typeof data.confidence === 'number' ? data.confidence : null,
       })
+      
+      // --- ADDED THIS: Save the parsed restaurants to state ---
+      if (data.restaurants && Array.isArray(data.restaurants)) {
+        setRecommendedRestaurants(data.restaurants)
+      }
+      
     } catch (submitError) {
       setError(submitError.message)
       setResult('')
@@ -230,11 +237,6 @@ function App({ userProfile }) {
     } finally {
       setIsLoading(false)
     }
-  }
-
-  function handleRoleChange(nextRole) {
-    // Role is locked after registration - cannot be changed
-    return
   }
 
   async function handleToggleVendorReviews() {
@@ -265,6 +267,51 @@ function App({ userProfile }) {
       setIsLoadingVendorReviews(false)
     }
   }
+
+  // --- MENU UPLOAD FUNCTIONS ---
+  const handleFileChange = (event) => {
+    const file = event.target.files[0];
+    if (file && file.type === "text/csv") {
+      setMenuFile(file);
+      setUploadStatus('');
+    } else {
+      setMenuFile(null);
+      setUploadStatus('Error: Please select a valid .csv file');
+    }
+  };
+
+  const handleInsertMenu = async () => {
+    if (!menuFile) return;
+
+    setIsLoadingUpload(true);
+    setUploadStatus("Uploading and processing...");
+
+    const formData = new FormData();
+    formData.append("file", menuFile);
+    // Uses the actual logged-in user's store_id!
+    formData.append("store_id", userProfile?.store_id || "unknown"); 
+
+    try {
+      const response = await fetch(`${API_BASE}/api/menu/upload`, {
+        method: "POST",
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (response.ok) {
+        setUploadStatus(`✅ Success: ${result.inserted_count} items added!`);
+        setMenuFile(null);
+      } else {
+        setUploadStatus(`❌ Error: ${result.detail || "Upload failed."}`);
+      }
+    } catch (error) {
+      console.error("Upload error:", error);
+      setUploadStatus("❌ Network error. Is the backend running?");
+    } finally {
+      setIsLoadingUpload(false);
+    }
+  };
 
   const confidencePercent =
     responseMeta && typeof responseMeta.confidence === 'number'
@@ -484,6 +531,48 @@ function App({ userProfile }) {
           )}
         </form>
 
+        {/* --- MENU UPLOAD SECTION (Inside return, only for Vendors) --- */}
+        {role === 'vendor' && (
+          <div className="bg-white p-6 rounded-xl shadow-sm mb-6 max-w-2xl mx-auto border border-gray-100" style={{ marginTop: '2rem' }}>
+            <h3 className="text-lg font-bold text-gray-800 mb-2">Bulk Upload Menu</h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Upload a CSV file with columns: menu_id, store_id, restaurant_name, item_name, category.
+            </p>
+            
+            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
+              <input 
+                type="file" 
+                accept=".csv" 
+                onChange={handleFileChange}
+                style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '4px', width: '100%' }}
+              />
+              <button 
+                type="button" 
+                onClick={handleInsertMenu}
+                disabled={!menuFile || isLoadingUpload}
+                className="primary"
+                style={{ opacity: (!menuFile || isLoadingUpload) ? 0.5 : 1 }}
+              >
+                {isLoadingUpload ? "Uploading..." : "Upload CSV"}
+              </button>
+            </div>
+            
+            {uploadStatus && (
+              <div style={{
+                marginTop: '1rem',
+                padding: '12px',
+                borderRadius: '6px',
+                backgroundColor: uploadStatus.includes('❌') ? '#ffebee' : '#e8f5e9',
+                color: uploadStatus.includes('❌') ? '#c62828' : '#2e7d32',
+                fontSize: '0.9rem'
+              }}>
+                {uploadStatus}
+              </div>
+            )}
+          </div>
+        )}
+        {/* --- END MENU UPLOAD SECTION --- */}
+
         <div className="example-block">
           <h2>Try one of these prompts</h2>
           <ul>
@@ -509,10 +598,152 @@ function App({ userProfile }) {
             {responseMeta?.source ? <span className="meta-pill">Source: {responseMeta.source}</span> : null}
           </div>
           {error ? <p className="error">{error}</p> : null}
-          {!error && result ? <ReactMarkdown>{result}</ReactMarkdown> : <p>Submit a prompt to see the result.</p>}
+          
+          {/* --- ADDED THIS: Updated rendering block for Markdown and Cards --- */}
+          {!error && result ? (
+            <>
+              <ReactMarkdown>{result}</ReactMarkdown>
+              
+              {recommendedRestaurants.length > 0 && (
+                <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {recommendedRestaurants.map((restaurant, index) => (
+                    <RestaurantCard 
+                      key={restaurant.store_id || index} 
+                      restaurant={restaurant} 
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <p>Submit a prompt to see the result.</p>
+          )}
         </section>
       </section>
     </main>
+  )
+}
+
+function RestaurantCard({ restaurant }) {
+  const {
+    name, food_type, avg_rating, address, phone, website,
+    distance_km, operating_hours_today, price_description,
+    sentiment_summary, lat, lng,
+  } = restaurant
+
+  const googleMapsUrl = address
+    ? `https://www.google.com/maps/search/?api=1&query=$${encodeURIComponent(address)}`
+    : lat && lng ? `https://www.google.com/maps?q=$${lat},${lng}` : null
+
+  const wazeUrl = lat && lng
+    ? `https://waze.com/ul?ll=${lat},${lng}&navigate=yes`
+    : address ? `https://waze.com/ul?q=${encodeURIComponent(address)}` : null
+
+  const stars = avg_rating
+    ? '★'.repeat(Math.round(avg_rating)) + '☆'.repeat(5 - Math.round(avg_rating))
+    : null
+  const posRatio = sentiment_summary?.positive_ratio
+  const sentimentColor = posRatio >= 0.7 ? '#22c55e' : posRatio >= 0.5 ? '#f59e0b' : '#ef4444'
+
+  return (
+    <div style={{
+      background: '#fff', border: '1.5px solid #f0e8e0', borderRadius: '14px',
+      padding: '16px 18px', marginTop: '10px',
+      boxShadow: '0 2px 8px rgba(0,0,0,0.06)',
+    }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
+        <div>
+          <h3 style={{ margin: '0 0 4px 0', fontSize: '1rem', fontWeight: '700', color: '#1a1a1a' }}>{name}</h3>
+          {food_type && (
+            <span style={{
+              fontSize: '0.72rem', background: '#fef3c7', color: '#92400e',
+              borderRadius: '20px', padding: '2px 9px', fontWeight: '600',
+            }}>{food_type}</span>
+          )}
+        </div>
+        {avg_rating && (
+          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+            <div style={{ fontSize: '0.82rem', color: '#f59e0b', letterSpacing: '1px' }}>{stars}</div>
+            <div style={{ fontSize: '0.75rem', color: '#666', marginTop: '2px' }}>{Number(avg_rating).toFixed(1)} / 5</div>
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
+        {distance_km != null && (
+          <span style={{
+            background: '#eff6ff', color: '#1d4ed8', borderRadius: '20px',
+            padding: '3px 9px', fontSize: '0.75rem', fontWeight: '600',
+          }}>📍 {Number(distance_km).toFixed(1)} km away</span>
+        )}
+        {operating_hours_today && (
+          <span style={{
+            background: '#f0fdf4', color: '#166534', borderRadius: '20px',
+            padding: '3px 9px', fontSize: '0.75rem', fontWeight: '500',
+          }}>🕐 {operating_hours_today}</span>
+        )}
+        {price_description && price_description !== 'Unknown' && (
+          <span style={{
+            background: '#fdf4ff', color: '#7e22ce', borderRadius: '20px',
+            padding: '3px 9px', fontSize: '0.75rem', fontWeight: '500',
+          }}>💰 {price_description}</span>
+        )}
+        {posRatio != null && (
+          <span style={{
+            background: '#f9fafb', color: sentimentColor, borderRadius: '20px',
+            padding: '3px 9px', fontSize: '0.75rem', fontWeight: '600',
+            border: `1px solid ${sentimentColor}33`,
+          }}>😊 {Math.round(posRatio * 100)}% positive</span>
+        )}
+      </div>
+
+      {address && (
+        <p style={{ margin: '0 0 6px 0', fontSize: '0.8rem', color: '#555', display: 'flex', gap: '5px' }}>
+          <span>🏠</span><span>{address}</span>
+        </p>
+      )}
+
+      {phone && (
+        <p style={{ margin: '0 0 6px 0', fontSize: '0.8rem', color: '#555' }}>
+          📞 <a href={`tel:${phone}`} style={{ color: '#d97706', fontWeight: '600', textDecoration: 'none' }}>{phone}</a>
+        </p>
+      )}
+
+      {website && (
+        <p style={{ margin: '0 0 10px 0', fontSize: '0.8rem' }}>
+          🌐 <a href={website} target="_blank" rel="noopener noreferrer"
+            style={{ color: '#2563eb', fontWeight: '500', textDecoration: 'none', wordBreak: 'break-all' }}>
+            {website.replace(/^https?:\/\/(www\.)?/, '').split('/')[0]}
+          </a>
+        </p>
+      )}
+
+      {(googleMapsUrl || wazeUrl) && (
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          {googleMapsUrl && (
+            <a href={googleMapsUrl} target="_blank" rel="noopener noreferrer" style={{
+              display: 'inline-flex', alignItems: 'center', gap: '5px',
+              background: '#4285f4', color: '#fff', borderRadius: '8px',
+              padding: '6px 12px', fontSize: '0.78rem', fontWeight: '600', textDecoration: 'none',
+            }}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="white">
+                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+              </svg>
+              Google Maps
+            </a>
+          )}
+          {wazeUrl && (
+            <a href={wazeUrl} target="_blank" rel="noopener noreferrer" style={{
+              display: 'inline-flex', alignItems: 'center', gap: '5px',
+              background: '#05c8f7', color: '#fff', borderRadius: '8px',
+              padding: '6px 12px', fontSize: '0.78rem', fontWeight: '600', textDecoration: 'none',
+            }}>
+              🚗 Waze
+            </a>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
