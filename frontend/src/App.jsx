@@ -47,7 +47,6 @@ function App({ userProfile }) {
   const [role, setRole] = useState(registeredRole)
   const [prompt, setPrompt] = useState('')
   const [restaurantName, setRestaurantName] = useState('')
-  const [externalReviewsText, setExternalReviewsText] = useState('')
   const [restaurantOptions, setRestaurantOptions] = useState([])
   const [showRestaurantDropdown, setShowRestaurantDropdown] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
@@ -56,6 +55,9 @@ function App({ userProfile }) {
   const [responseMeta, setResponseMeta] = useState(null)
   const [sentimentEngine, setSentimentEngine] = useState('unknown')
   const [vendorRestaurant, setVendorRestaurant] = useState(null)
+  const [vendorReviews, setVendorReviews] = useState([])
+  const [showVendorReviews, setShowVendorReviews] = useState(false)
+  const [isLoadingVendorReviews, setIsLoadingVendorReviews] = useState(false)
 
   // Sync role with registeredRole whenever it changes
   useEffect(() => {
@@ -181,11 +183,6 @@ function App({ userProfile }) {
       return
     }
 
-    const externalReviews = externalReviewsText
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-
     let locationPayload = {}
     if (role === 'diner' && isNearestIntent(prompt)) {
       try {
@@ -204,8 +201,6 @@ function App({ userProfile }) {
       restaurant_name: restaurantName,
       // For vendors, include store_id so backend can fetch correct restaurant data
       ...(role === 'vendor' && userProfile?.store_id && { store_id: userProfile.store_id }),
-      // Include external reviews if provided
-      external_reviews: externalReviews.length > 0 ? externalReviews : undefined,
       ...locationPayload,
     }
 
@@ -242,6 +237,35 @@ function App({ userProfile }) {
     return
   }
 
+  async function handleToggleVendorReviews() {
+    if (showVendorReviews) {
+      setShowVendorReviews(false)
+      return
+    }
+    if (!userProfile?.store_id) {
+      setError('Unable to load reviews: store id is missing.')
+      return
+    }
+    setError('')
+    setIsLoadingVendorReviews(true)
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/reviews/by-store-id?store_id=${encodeURIComponent(userProfile.store_id)}&limit=100`,
+      )
+      if (!response.ok) {
+        throw new Error('Failed to load reviews.')
+      }
+      const data = await response.json()
+      const rows = Array.isArray(data.reviews) ? data.reviews : []
+      setVendorReviews(rows)
+      setShowVendorReviews(true)
+    } catch (loadError) {
+      setError(loadError.message || 'Failed to load reviews.')
+    } finally {
+      setIsLoadingVendorReviews(false)
+    }
+  }
+
   const confidencePercent =
     responseMeta && typeof responseMeta.confidence === 'number'
       ? `${Math.round(responseMeta.confidence * 100)}%`
@@ -260,6 +284,19 @@ function App({ userProfile }) {
       : sentimentEngine === 'keyword_fallback'
         ? 'meta-pill meta-pill--fallback'
         : 'meta-pill meta-pill--unknown'
+
+  function renderRatingStars(value) {
+    const raw = Number(value)
+    if (!Number.isFinite(raw)) {
+      return { stars: '☆☆☆☆☆', label: 'N/A' }
+    }
+    const clamped = Math.max(0, Math.min(5, raw))
+    const rounded = Math.round(clamped)
+    return {
+      stars: `${'★'.repeat(rounded)}${'☆'.repeat(5 - rounded)}`,
+      label: clamped.toFixed(1),
+    }
+  }
 
   return (
     <main className="page">
@@ -402,26 +439,47 @@ function App({ userProfile }) {
                 />
               </label>
 
-              <label className="field">
-                <span>
-                  Additional Reviews (optional - one review per line)
-                </span>
-                <textarea
-                  rows={4}
-                  value={externalReviewsText}
-                  onChange={(event) => setExternalReviewsText(event.target.value)}
-                  placeholder="Optionally paste additional reviews here. System will primarily analyze your registered restaurant's database reviews."
-                />
-                <small className="field-hint">
-                  The system will automatically analyze all reviews in the database for your restaurant. This field is optional for supplementary reviews.
-                </small>
-              </label>
-
               <div className="actions">
                 <button type="submit" className="primary" disabled={isLoading}>
                   {isLoading ? 'Generating...' : 'Generate AI Answer'}
                 </button>
+                <button
+                  type="button"
+                  className="primary secondary"
+                  onClick={handleToggleVendorReviews}
+                  disabled={isLoadingVendorReviews || !vendorRestaurant}
+                >
+                  {isLoadingVendorReviews ? 'Loading...' : showVendorReviews ? 'Hide Reviews' : 'Reviews'}
+                </button>
               </div>
+
+              {showVendorReviews ? (
+                <section className="vendor-reviews" aria-live="polite">
+                  <h3>Latest Reviews (Newest First)</h3>
+                  {vendorReviews.length === 0 ? (
+                    <p>No reviews found for this restaurant.</p>
+                  ) : (
+                    <ul className="vendor-review-list">
+                      {vendorReviews.map((review, index) => {
+                        const rating = renderRatingStars(review.overall_rating)
+                        return (
+                          <li key={`${review.updated_at || 'unknown'}-${index}`} className="vendor-review-item">
+                            <p>{review.text}</p>
+                            <div className="vendor-review-rating" aria-label={`Rating ${rating.label} out of 5`}>
+                              <span className="vendor-review-stars">{rating.stars}</span>
+                              <span className="vendor-review-score">{rating.label}/5</span>
+                            </div>
+                            <small>
+                              Sentiment: {review.sentiment || 'N/A'} | Date:{' '}
+                              {review.updated_at ? new Date(review.updated_at).toLocaleString() : 'Unknown'}
+                            </small>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )}
+                </section>
+              ) : null}
             </>
           )}
         </form>

@@ -222,13 +222,90 @@ VENDOR_SYSTEM_PROMPT = (
     "You are a restaurant business consultant focused on business optimization. "
     "Use review-driven insights, customer sentiment analysis, actionable recommendations, "
     "context-aware reasoning, what-if simulation thinking, and explainable AI decisions.\n\n"
+
     "Context may include address, coordinates, Google price tier, phone, website, operating hours, "
-    "and structured sentiment metrics — use them when relevant (positioning, operations, recovery plans).\n\n"
+    "structured sentiment metrics, and aspect_analysis — use them when relevant.\n\n"
+
     "Analyze performance using customer reviews, sentiment trends, and rating metrics.\n\n"
-    "Organize your answer around: key problems, strengths, prioritized actionable improvements, and plausible "
-    "business impact — but adapt density to the question; do not pad.\n\n"
-    "Ground claims in the supplied reviews and metrics. "
-    "Use markdown bold (**text**) sparingly for critical issues, strengths, and top priorities."
+
+    "=== RESPONSE ADAPTATION RULE ===\n"
+    "You MUST adapt your answer structure to vendor_intent.\n"
+    '- If vendor_intent = "diagnostic": focus on root causes of lower ratings, and compare positive vs negative patterns relevant to the question.\n'
+    '- If vendor_intent = "strengths": focus ONLY on strengths, rank top 3-5 strengths by review frequency, and use wording like "most consistently praised" or "frequently mentioned".\n'
+    '- If vendor_intent = "improvements": focus ONLY on weaknesses/issues, rank top complaints by severity or frequency, and provide concrete fixes tied to review evidence.\n'
+    '- If vendor_intent = "general": provide balanced analysis (strengths + weaknesses + practical actions).\n'
+    "Do NOT reuse one rigid template for every question.\n\n"
+
+    "=== ASPECT MODE OVERRIDE (HIGHEST PRIORITY) ===\n"
+    "If vendor_intent starts with 'aspect_':\n"
+    "- You MUST answer ONLY that specific aspect\n"
+    "- You MUST NOT include:\n"
+    "  • overall analysis\n"
+    "  • strengths/weaknesses sections\n"
+    "  • unrelated aspects\n"
+    "- You MUST:\n"
+    "  • Use aspect_analysis for that aspect\n"
+    "  • Quantify positive vs negative mentions\n"
+    "  • State total mentions if available\n"
+    "  • Conclude clearly (positive / negative / mixed)\n"
+    "  • Explain consistency (e.g. generally good but inconsistent)\n"
+    "- Output MUST be a focused paragraph (3–5 sentences max)\n\n"
+
+    "=== ASPECT ANALYSIS RULE (CRITICAL) ===\n"
+    "When the user asks about a specific aspect (e.g. portion, price, service, taste):\n"
+    "- You MUST prioritize aspect_analysis data if available\n"
+    "- You MUST quantify:\n"
+    "  • number of positive mentions\n"
+    "  • number of negative mentions\n"
+    "  • total mentions (if available)\n"
+    "- You MUST clearly conclude whether sentiment is:\n"
+    "  • mostly positive\n"
+    "  • mostly negative\n"
+    "  • mixed / inconsistent\n"
+    "- You MUST explain consistency (e.g. generally good but inconsistent)\n"
+    "- You MUST NOT give generic strengths/weaknesses\n"
+    "- You MUST NOT mix unrelated aspects\n"
+    "- If aspect data is weak or limited, say so clearly\n\n"
+
+    "=== REVIEW GROUNDING RULE ===\n"
+    "You MUST anchor conclusions to review evidence and review_summary.\n"
+    "Mention repeated themes and frequency signals (e.g., multiple reviews mention, frequently reported).\n"
+    "Avoid generic consultant advice unless clearly supported by supplied review signals.\n"
+    "If the user asks about a time scope (for example this month), prioritize scoped_reviews and state if data is limited.\n\n"
+
+    "=== QUANTIFICATION RULE ===\n"
+    "Whenever possible, include numbers or relative frequency:\n"
+    "- e.g. 'many reviews', 'a few complaints', 'majority of customers', 'several mentions'\n"
+    "- Prefer quantified insight over vague statements\n\n"
+
+    "=== CONSISTENCY & CONFLICT HANDLING ===\n"
+    "If both positive and negative signals exist for the same aspect:\n"
+    "- DO NOT list them separately as strengths and weaknesses\n"
+    "- Instead, synthesize into one conclusion:\n"
+    "  → e.g. 'generally good but inconsistent'\n\n"
+
+    "=== SENTIMENT INTERPRETATION RULE ===\n"
+    "Interpret sentiment ratios correctly:\n"
+    "- >70% positive → strong performance\n"
+    "- 50–70% → moderate / mixed\n"
+    "- <50% → weak or concerning\n"
+    "Do NOT label low ratios as strong performance.\n\n"
+
+    "=== ACTIONABLE INSIGHT RULE ===\n"
+    "When giving recommendations:\n"
+    "- Tie actions directly to review evidence\n"
+    "- Be specific and practical (not generic advice)\n"
+    "- Example: instead of 'improve portion', say 'standardize portion size to reduce inconsistency reported in reviews'\n\n"
+
+    "=== OUTPUT STYLE ===\n"
+    "- Be concise but insightful\n"
+    "- Avoid repetition\n"
+    "- Use natural business language\n"
+    "- Use markdown bold (**text**) sparingly for key insights\n"
+    "- Do NOT hallucinate missing data\n\n"
+
+    "=== GOAL ===\n"
+    "Provide precise, evidence-based, and actionable business insights grounded in customer reviews and structured data."
 )
 
 
@@ -364,7 +441,7 @@ def _extract_keywords(prompt: str) -> List[str]:
     intent_rules: List[Tuple[List[str], Tuple[str, ...]]] = [
         (
             ["portion", "large portion", "big portion", "generous", "heap", "banyak", "besar", "serving size", "big serving"],
-            ("portion", "generous", "serving", "banyak", "large"),
+            ("portion", "generous", "serving", "banyak", "large", "small", "size"),
         ),
         (
             ["cheap", "budget", "affordable", "murah", "expensive", "mahal", "price", "value", "worth", "pricing"],
@@ -532,6 +609,75 @@ def _review_insights(reviews: List[Dict]) -> Dict[str, List[str]]:
             ["slow", "expensive", "mahal", "cold", "rude", "dirty", "small portion", "crowded"],
         ),
     }
+def _aspect_sentiment_analysis(reviews: List[Dict]) -> Dict[str, Dict]:
+    """
+    Extract aspect-level sentiment for:
+    - portion
+    - price
+    - service
+    - taste
+    """
+
+    aspect_rules = {
+        "portion": {
+            "keywords": ["portion", "serving", "size", "banyak", "large", "small"],
+            "pos": ["big", "generous", "large", "banyak", "worth", "filling"],
+            "neg": ["small", "little", "tiny", "not enough", "too small"],
+        },
+        "price": {
+            "keywords": ["price", "cheap", "expensive", "worth", "mahal", "murah"],
+            "pos": ["cheap", "affordable", "worth", "value", "reasonable"],
+            "neg": ["expensive", "mahal", "overpriced", "not worth"],
+        },
+        "service": {
+            "keywords": ["service", "staff", "waiter", "attitude"],
+            "pos": ["friendly", "fast", "good service", "nice staff"],
+            "neg": ["slow", "rude", "bad service", "unfriendly"],
+        },
+        "taste": {
+            "keywords": ["taste", "delicious", "sedap", "tasty", "flavour"],
+            "pos": ["delicious", "tasty", "sedap", "flavourful"],
+            "neg": ["bland", "bad", "not tasty", "no taste"],
+        },
+    }
+
+    results = {}
+
+    for aspect, rule in aspect_rules.items():
+        pos = 0
+        neg = 0
+        total_mentions = 0
+
+        for r in reviews:
+            text = str(r.get("review_text") or r.get("text") or "").lower()
+
+            if not text.strip():
+                continue
+
+            if any(k in text for k in rule["keywords"]):
+                total_mentions += 1
+
+                if any(p in text for p in rule["pos"]):
+                    pos += 1
+                if any(n in text for n in rule["neg"]):
+                    neg += 1
+
+        total = pos + neg
+        score = (pos - neg) / total if total > 0 else 0
+
+        results[aspect] = {
+            "positive_mentions": pos,
+            "negative_mentions": neg,
+            "total_mentions": total_mentions,
+            "net_sentiment": round(score, 2),
+            "dominant": (
+                "positive" if pos > neg else
+                "negative" if neg > pos else
+                "mixed"
+            )
+        }
+
+    return results
 
 
 def _price_label(tier: Optional[str]) -> str:
@@ -564,6 +710,109 @@ def _review_brief(r: Dict) -> Dict:
         "overall_rating": r.get("overall_rating"),
         "sentiment": r.get("sentiment"),
         "updated_at": _format_ts(r.get("updated_at")),
+    }
+
+
+def _detect_vendor_intent(prompt: str) -> str:
+    p = str(prompt or "").lower()
+    if any(k in p for k in ["portion", "serving", "size"]):
+        return "aspect_portion"
+    if any(k in p for k in ["price", "expensive", "cheap", "value"]):
+        return "aspect_price"
+    if any(k in p for k in ["service", "staff", "waiter"]):
+        return "aspect_service"
+    if any(k in p for k in ["taste", "food quality", "delicious"]):
+        return "aspect_taste"
+    if "why" in p and any(k in p for k in ("rating", "ratings", "lower", "drop", "decrease")):
+        return "diagnostic"
+    if any(k in p for k in ("strongest", "strength", "best", "doing well", "what works", "top thing")):
+        return "strengths"
+    if any(k in p for k in ("improve", "fix", "weakness", "problem", "issue", "complaint", "better")):
+        return "improvements"
+    return "general"
+
+
+def _mentions_this_month(prompt: str) -> bool:
+    p = str(prompt or "").lower()
+    return any(k in p for k in ("this month", "current month", "bulan ini", "month"))
+
+
+def _parse_iso_datetime(value: Any) -> Optional[datetime]:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _reviews_for_requested_period(reviews: List[Dict], prompt: str, now_myt: datetime) -> List[Dict]:
+    if not _mentions_this_month(prompt):
+        return reviews
+    scoped: List[Dict] = []
+    for r in reviews:
+        dt = _parse_iso_datetime(r.get("updated_at"))
+        if dt is None:
+            continue
+        local_dt = dt.astimezone(MYT) if dt.tzinfo else dt.replace(tzinfo=MYT)
+        if local_dt.year == now_myt.year and local_dt.month == now_myt.month:
+            scoped.append(r)
+    return scoped
+
+
+def _summarize_review_patterns(reviews: List[Dict]) -> Dict[str, Any]:
+    positive_terms = [
+        "delicious",
+        "sedap",
+        "tasty",
+        "friendly",
+        "clean",
+        "fast",
+        "value",
+        "reasonable",
+        "worth",
+        "fresh",
+    ]
+    negative_terms = [
+        "slow",
+        "late",
+        "rude",
+        "dirty",
+        "cold",
+        "expensive",
+        "mahal",
+        "small portion",
+        "missing",
+        "inconsistent",
+    ]
+    pos_counts = {k: 0 for k in positive_terms}
+    neg_counts = {k: 0 for k in negative_terms}
+
+    for review in reviews:
+        text = str(review.get("review_text") or review.get("text") or "").lower().strip()
+        if not text:
+            continue
+        for k in positive_terms:
+            if k in text:
+                pos_counts[k] += 1
+        for k in negative_terms:
+            if k in text:
+                neg_counts[k] += 1
+
+    top_pos = sorted(((k, v) for k, v in pos_counts.items() if v > 0), key=lambda item: item[1], reverse=True)[:5]
+    top_neg = sorted(((k, v) for k, v in neg_counts.items() if v > 0), key=lambda item: item[1], reverse=True)[:5]
+
+    return {
+        "total_review_count": len(reviews),
+        "top_positive_keywords": [{"keyword": k, "count": v} for k, v in top_pos],
+        "top_negative_keywords": [{"keyword": k, "count": v} for k, v in top_neg],
+        "most_common_strength": top_pos[0][0] if top_pos else None,
+        "most_common_issue": top_neg[0][0] if top_neg else None,
     }
 
 
@@ -634,6 +883,17 @@ def get_restaurant_by_store_id(store_id: str = Query(min_length=1)) -> Dict:
             raise HTTPException(status_code=404, detail=f"Restaurant with store_id '{store_id}' not found")
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/reviews/by-store-id")
+def get_reviews_by_store_id(store_id: str = Query(min_length=1), limit: int = Query(default=100, ge=1, le=500)) -> Dict[str, List[Dict]]:
+    """Get restaurant reviews sorted by newest first."""
+    try:
+        reviews = get_recent_reviews(store_id, limit=limit)
+        clean_reviews = [_review_brief(r) for r in reviews if (r.get("review_text") or "").strip()]
+        return {"reviews": clean_reviews}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -760,6 +1020,8 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
                 continue
             seen_txt.add(t)
             relevant_list.append(r)
+        all_reviews = recent_list + relevant_list
+        aspect_analysis = _aspect_sentiment_analysis(all_reviews)
 
         block = _restaurant_context_block(row, now_myt)
         distance_km = None
@@ -782,7 +1044,8 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
                 "relevant_reviews": [_review_brief(r) for r in relevant_list[:6]],
                 "menu_highlights": _extract_menu_keywords(recent_list + relevant_list, row.get("food_type")),
                 "price_description": _price_label(row.get("google_price_tier")),
-                "review_insights": _review_insights(recent_list + relevant_list),
+                "review_insights": _review_insights(all_reviews),
+                "aspect_analysis": aspect_analysis,
                 "explanation_hint": {
                     "should_describe_food": True,
                     "should_describe_price": True,
@@ -839,6 +1102,8 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
 
 
 def _handle_vendor(payload: AskRequest, conversation_id: str, history: List[Dict]) -> AskResponse:
+    vendor_intent = _detect_vendor_intent(payload.prompt)
+    aspect_focus = vendor_intent.replace("aspect_", "") if vendor_intent.startswith("aspect_") else None
     if payload.restaurant_name:
         found = find_restaurant_by_name(payload.restaurant_name)
         if found:
@@ -846,9 +1111,12 @@ def _handle_vendor(payload: AskRequest, conversation_id: str, history: List[Dict
             now_myt = _now_myt()
             metrics = get_metrics_for_store_ids([store_id]).get(store_id, {})
             reviews = get_recent_reviews(store_id, limit=20)
+            scoped_reviews = _reviews_for_requested_period(reviews, payload.prompt, now_myt)
             rest_block = _restaurant_context_block(found, now_myt)
             ai_input = {
                 "role": "vendor",
+                "vendor_intent": vendor_intent,
+                "aspect_focus": aspect_focus,
                 "restaurant": {
                     "store_id": found.get("store_id"),
                     "name": found.get("name"),
@@ -858,6 +1126,8 @@ def _handle_vendor(payload: AskRequest, conversation_id: str, history: List[Dict
                 },
                 "sentiment_summary": _sentiment_summary_from_metrics(metrics),
                 "recent_reviews": [_review_brief(r) for r in reviews if (r.get("review_text") or "").strip()],
+                "scoped_reviews": [_review_brief(r) for r in scoped_reviews if (r.get("review_text") or "").strip()],
+                "review_summary": _summarize_review_patterns(scoped_reviews or reviews),
                 "conversation_history": [{"sender": h.get("sender"), "message": h.get("message")} for h in history],
                 "user_prompt": payload.prompt,
                 "current_day_myt": now_myt.strftime("%A"),
@@ -871,10 +1141,15 @@ def _handle_vendor(payload: AskRequest, conversation_id: str, history: List[Dict
 
     if payload.external_reviews:
         sentiment = _simple_sentiment_summary(payload.external_reviews)
+        external_review_items = [{"review_text": text, "updated_at": None} for text in payload.external_reviews]
+        review_summary = _summarize_review_patterns(external_review_items)
         ai_input = {
             "role": "vendor",
+            "vendor_intent": vendor_intent,
+            "aspect_focus": aspect_focus,
             "restaurant_name": payload.restaurant_name,
             "external_reviews": payload.external_reviews,
+            "review_summary": review_summary,
             "sentiment_summary": sentiment,
             "sentiment_engine": get_sentiment_engine_status(),
             "sentiment_confidence": sentiment.get("model_confidence", 0.0),

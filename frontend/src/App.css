@@ -228,6 +228,8 @@ input:focus,
 
 .actions {
   display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
 }
 
 .primary {
@@ -252,6 +254,79 @@ input:focus,
 .primary:disabled {
   opacity: 0.65;
   cursor: not-allowed;
+}
+
+.secondary {
+  background: #ffffff;
+  color: #A0756A;
+  border: 1px solid rgba(255, 150, 100, 0.45);
+  box-shadow: none;
+}
+
+.secondary:hover:not(:disabled) {
+  transform: none;
+  box-shadow: 0 2px 8px rgba(255, 107, 107, 0.12);
+}
+
+.vendor-reviews {
+  border: 1px solid rgba(255, 200, 150, 0.5);
+  background: rgba(255, 255, 255, 0.88);
+  border-radius: 12px;
+  padding: 0.95rem;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.vendor-reviews h3 {
+  margin: 0;
+  color: #A0756A;
+  font-size: clamp(0.95rem, 2.3vw, 1.08rem);
+}
+
+.vendor-reviews p {
+  margin: 0;
+  color: #A0756A;
+}
+
+.vendor-review-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.65rem;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.vendor-review-item {
+  border: 1px solid rgba(255, 200, 150, 0.45);
+  border-radius: 10px;
+  padding: 0.65rem;
+  background: rgba(255, 255, 255, 0.95);
+  display: grid;
+  gap: 0.35rem;
+}
+
+.vendor-review-rating {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.vendor-review-stars {
+  letter-spacing: 0.08rem;
+  color: #f4a321;
+  font-size: 1rem;
+}
+
+.vendor-review-score {
+  color: #A0756A;
+  font-weight: 700;
+  font-size: 0.86rem;
+}
+
+.vendor-review-item small {
+  color: #B8A89A;
 }
 
 .example-block h2,
