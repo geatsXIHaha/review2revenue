@@ -695,6 +695,13 @@ def insert_bulk_menu_items(records: list) -> int:
                         (menu_id, store_id, restaurant_name, item_name, category, price_rm, source)
                     VALUES 
                         (:menu_id, :store_id, :restaurant_name, :item_name, :category, :price_rm, :source)
+                    ON CONFLICT (menu_id) 
+                    DO UPDATE SET 
+                        restaurant_name = EXCLUDED.restaurant_name,
+                        item_name = EXCLUDED.item_name,
+                        category = EXCLUDED.category,
+                        price_rm = EXCLUDED.price_rm,
+                        source = EXCLUDED.source
                 """),
                 records
             )
