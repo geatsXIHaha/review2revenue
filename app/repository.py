@@ -1,6 +1,9 @@
 from pathlib import Path
+import json
 import threading
-from typing import Dict, List, Optional
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from sqlalchemy import create_engine, text
@@ -11,6 +14,14 @@ from .config import DB_URL
 engine: Engine = create_engine(DB_URL)
 _CHAT_SCHEMA_INIT_LOCK = threading.Lock()
 _CHAT_SCHEMA_INITIALIZED = False
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 # Columns that exist on public.restaurants (no review_count in schema).
 _RESTAURANT_SELECT_SQL = """
@@ -100,6 +111,7 @@ def _ensure_chat_messages_table() -> None:
                 sender TEXT NOT NULL,
                 message TEXT NOT NULL,
                 restaurant_name TEXT NULL,
+                restaurants_json JSONB NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
             """
@@ -140,6 +152,14 @@ def _ensure_chat_messages_table() -> None:
         with engine.begin() as conn:
             conn.execute(conversations_query)
             conn.execute(query)
+            conn.execute(
+                text(
+                    """
+                    ALTER TABLE chat_messages
+                    ADD COLUMN IF NOT EXISTS restaurants_json JSONB NULL
+                    """
+                )
+            )
             conn.execute(
                 text(
                     """
@@ -208,6 +228,7 @@ def save_chat_message(
     sender: str,
     message: str,
     restaurant_name: Optional[str] = None,
+    restaurants: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     if not conversation_id or not message.strip() or role not in {"user", "assistant"}:
         return
@@ -215,8 +236,8 @@ def save_chat_message(
     _ensure_chat_messages_table()
     query = text(
         """
-        INSERT INTO chat_messages (conversation_id, role, sender, message, restaurant_name)
-        VALUES (:conversation_id, :role, :sender, :message, :restaurant_name)
+        INSERT INTO chat_messages (conversation_id, role, sender, message, restaurant_name, restaurants_json)
+        VALUES (:conversation_id, :role, :sender, :message, :restaurant_name, CAST(:restaurants_json AS JSONB))
         """
     )
     with engine.begin() as conn:
@@ -228,6 +249,7 @@ def save_chat_message(
                 "sender": sender,
                 "message": message,
                 "restaurant_name": restaurant_name,
+                "restaurants_json": json.dumps(restaurants, default=_json_default) if restaurants else None,
             },
         )
         conn.execute(
@@ -248,7 +270,7 @@ def get_chat_history(conversation_id: str, limit: Optional[int] = None) -> List[
 
     _ensure_chat_messages_table()
     base_sql = """
-        SELECT id, role, sender, message, created_at, restaurant_name
+        SELECT id, role, sender, message, created_at, restaurant_name, restaurants_json
         FROM chat_messages
         WHERE conversation_id = :conversation_id
         ORDER BY created_at ASC, id ASC
@@ -259,7 +281,24 @@ def get_chat_history(conversation_id: str, limit: Optional[int] = None) -> List[
         if limit is not None:
             params["limit"] = limit
         rows = conn.execute(query, params).mappings().all()
-    return [dict(row) for row in rows]
+    out: List[Dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        raw_restaurants = item.get("restaurants_json")
+        restaurants: List[Dict[str, Any]] = []
+        if isinstance(raw_restaurants, list):
+            restaurants = raw_restaurants
+        elif isinstance(raw_restaurants, str):
+            try:
+                parsed = json.loads(raw_restaurants)
+                if isinstance(parsed, list):
+                    restaurants = parsed
+            except Exception:
+                restaurants = []
+        item["restaurants"] = restaurants
+        item.pop("restaurants_json", None)
+        out.append(item)
+    return out
 
 
 def list_chat_conversations(role: str, user_id: str, limit: int = 50) -> List[Dict]:
@@ -368,8 +407,8 @@ def start_conversation_with_initial_messages(
             conn.execute(
                 text(
                     """
-                    INSERT INTO chat_messages (conversation_id, role, sender, message, restaurant_name)
-                    VALUES (:conversation_id, 'user', :sender, :message, :restaurant_name)
+                    INSERT INTO chat_messages (conversation_id, role, sender, message, restaurant_name, restaurants_json)
+                    VALUES (:conversation_id, 'user', :sender, :message, :restaurant_name, NULL)
                     """
                 ),
                 {
@@ -382,8 +421,8 @@ def start_conversation_with_initial_messages(
             conn.execute(
                 text(
                     """
-                    INSERT INTO chat_messages (conversation_id, role, sender, message, restaurant_name)
-                    VALUES (:conversation_id, 'assistant', 'ai', :message, :restaurant_name)
+                    INSERT INTO chat_messages (conversation_id, role, sender, message, restaurant_name, restaurants_json)
+                    VALUES (:conversation_id, 'assistant', 'ai', :message, :restaurant_name, NULL)
                     """
                 ),
                 {
