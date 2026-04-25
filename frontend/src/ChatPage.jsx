@@ -249,8 +249,6 @@ function RestaurantCard({ restaurant, userProfile }) {
       </div>
     </div>
   )
-}    </div>
-  )
 }
 
 // ── Main ChatPage ──────────────────────────────────────────────────────────────
