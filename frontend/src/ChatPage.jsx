@@ -83,23 +83,27 @@ function RestaurantCard({ restaurant, userProfile }) {
   const [showMenu, setShowMenu] = useState(false)
   const [menuItems, setMenuItems] = useState([])
   const [isLoadingMenu, setIsLoadingMenu] = useState(false)
+  const [menuError, setMenuError] = useState('')
 
   async function fetchMenu() {
     if (!restaurant?.store_id) return
     setIsLoadingMenu(true)
     setMenuItems([])
+    setMenuError('')
     try {
-      const response = await fetch(`${API_BASE}/api/menu/by-store-id?store_id=${encodeURIComponent(restaurant.store_id)}&user_name=${encodeURIComponent(userProfile?.user_name || '')}`)
+      const userNameParam = encodeURIComponent(userProfile?.user_name || userProfile?.displayName || '')
+      const response = await fetch(`${API_BASE}/api/menu/by-store-id?store_id=${encodeURIComponent(restaurant.store_id)}&user_name=${userNameParam}`)
       if (!response.ok) {
         const err = await response.json().catch(() => ({}))
-        throw new Error(err.detail || 'Failed to fetch menu')
+        const msg = err.detail || `Failed to fetch menu (status ${response.status})`
+        throw new Error(msg)
       }
       const data = await response.json()
       setMenuItems(Array.isArray(data.menu_items) ? data.menu_items : [])
       setShowMenu(true)
     } catch (err) {
       console.error('Menu fetch error:', err)
-      // keep UI simple: hide menu on error
+      setMenuError(err.message || 'Failed to fetch menu')
       setShowMenu(false)
     } finally {
       setIsLoadingMenu(false)
@@ -231,6 +235,10 @@ function RestaurantCard({ restaurant, userProfile }) {
         }}>
           {isLoadingMenu ? 'Loading menu...' : (showMenu ? 'Refresh Menu' : 'View Menu')}
         </button>
+
+        {menuError && (
+          <p style={{ marginTop: '8px', fontSize: '0.85rem', color: '#d32f2f' }}>{menuError}</p>
+        )}
 
         {showMenu && !isLoadingMenu && menuItems.length === 0 && (
           <p style={{ marginTop: '8px', fontSize: '0.85rem', color: '#666' }}>No menu items found.</p>
