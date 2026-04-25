@@ -103,14 +103,28 @@ function RestaurantCard({ restaurant, userProfile }) {
     setMenuItems([])
     setMenuError('')
     try {
-      const response = await fetch(`${API_BASE}/api/menu/by-store-id?store_id=${encodeURIComponent(restaurant.store_id)}`)
+      // Use grouped endpoint which guarantees category + items
+      const response = await fetch(`${API_BASE}/api/menu/grouped?store_id=${encodeURIComponent(restaurant.store_id)}`)
       if (!response.ok) {
         const err = await response.json().catch(() => ({}))
         const msg = err.detail || `Failed to fetch menu (status ${response.status})`
         throw new Error(msg)
       }
       const data = await response.json()
-      setMenuItems(Array.isArray(data.menu_items) ? sortMenu(data.menu_items) : [])
+      if (Array.isArray(data.categories)) {
+        // flatten categories into items including category field
+        const flat = []
+        data.categories.forEach((cat) => {
+          const cname = cat.category || 'Uncategorized'
+          ;(cat.items || []).forEach((it) => {
+            flat.push({ ...it, category: cname })
+          })
+        })
+        setMenuItems(sortMenu(flat))
+      } else {
+        // fallback
+        setMenuItems(Array.isArray(data.menu_items) ? sortMenu(data.menu_items) : [])
+      }
       setShowMenu(true)
     } catch (err) {
       console.error('Menu fetch error:', err)
