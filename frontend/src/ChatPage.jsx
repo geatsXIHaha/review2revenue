@@ -118,6 +118,7 @@ function RestaurantCard({ restaurant, userProfile }) {
   const [reviews, setReviews] = useState([])
   const [isLoadingReviews, setIsLoadingReviews] = useState(false)
   const [reviewsError, setReviewsError] = useState('')
+  const [reviewFilter, setReviewFilter] = useState('all')
 
   function renderRatingStars(value) {
     const raw = Number(value)
@@ -126,6 +127,35 @@ function RestaurantCard({ restaurant, userProfile }) {
     const rounded = Math.round(clamped)
     return '★'.repeat(rounded) + '☆'.repeat(5 - rounded)
   }
+
+  async function fetchReviews() {
+  if (!restaurant?.store_id) {
+    setReviewsError('No store_id available for this restaurant')
+    return
+  }
+
+  setIsLoadingReviews(true)
+  setReviews([])
+  setReviewsError('')
+
+  try {
+    const response = await fetch(`${API_BASE}/api/reviews/by-store-id?store_id=${encodeURIComponent(restaurant.store_id)}`)
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}))
+      throw new Error(err.detail || `Failed to fetch reviews (status ${response.status})`)
+    }
+    const data = await response.json()
+    // Adjust depending on your API response shape
+    setReviews(Array.isArray(data) ? data : (data.reviews || []))
+    setShowReviews(true)
+  } catch (err) {
+    console.error('Reviews fetch error:', err)
+    setReviewsError(err.message || 'Failed to fetch reviews')
+    setShowReviews(false)
+  } finally {
+    setIsLoadingReviews(false)
+  }
+}
 
   async function fetchMenu() {
     // Prefer embedded menu_items if provided by backend
@@ -363,28 +393,100 @@ function RestaurantCard({ restaurant, userProfile }) {
           </div>
         )}
 
-        {showReviews && (
+     {showReviews && (
           <div style={{ marginTop: '8px', padding: '10px', background: '#fafafa', borderRadius: '8px' }}>
             {isLoadingReviews ? (
               <p style={{ margin: 0 }}>Loading reviews...</p>
-            ) : reviews.length === 0 ? (
-              <p style={{ margin: 0, color: '#666' }}>No reviews found.</p>
             ) : (
-              <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-                {reviews.map((rev, idx) => (
-                  <li key={rev.id || idx} style={{ padding: '8px 0', borderTop: idx ? '1px solid #eee' : 'none' }}>
-                    <p style={{ margin: '0 0 6px 0' }}>{rev.review_text || rev.text || rev.message || ''}</p>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#666', fontSize: '0.85rem' }}>
-                      <div style={{ fontWeight: 700, color: '#f59e0b' }}>{renderRatingStars(rev.overall_rating || rev.rating || 0)}</div>
-                      <small>{rev.updated_at ? new Date(rev.updated_at).toLocaleString() : (rev.created_at ? new Date(rev.created_at).toLocaleString() : '')}</small>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <>
+                <div style={{ marginBottom: '8px' }}>
+                  <p style={{ margin: '0 0 6px 0', fontSize: '0.8rem', color: '#888' }}>
+                    <strong>Latest Reviews (Newest First)</strong>
+                  </p>
+                  <p style={{ margin: '0 0 8px 0', fontSize: '0.75rem', color: '#aaa' }}>
+                    Total reviews: {reviews.length} | Showing: {
+                      reviews.filter(r => {
+                        if (reviewFilter === 'all') return true
+                        const s = (r.sentiment || '').toLowerCase()
+                        const rating = Number(r.overall_rating || r.rating || 0)
+                        if (reviewFilter === 'positive') return s === 'positive' || rating >= 4
+                        if (reviewFilter === 'negative') return s === 'negative' || rating <= 2
+                        if (reviewFilter === 'neutral') return s === 'neutral' || rating === 3
+                        return true
+                      }).length
+                    }
+                  </p>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    {['all', 'positive', 'negative', 'neutral'].map(f => (
+                      <button
+                        key={f}
+                        onClick={() => setReviewFilter(f)}
+                        style={{
+                          padding: '4px 12px', borderRadius: '20px', border: '1.5px solid',
+                          fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer',
+                          background: reviewFilter === f ? (
+                            f === 'positive' ? '#22c55e' :
+                            f === 'negative' ? '#ef4444' :
+                            f === 'neutral' ? '#f59e0b' : '#111827'
+                          ) : '#fff',
+                          color: reviewFilter === f ? '#fff' : (
+                            f === 'positive' ? '#22c55e' :
+                            f === 'negative' ? '#ef4444' :
+                            f === 'neutral' ? '#f59e0b' : '#555'
+                          ),
+                          borderColor: (
+                            f === 'positive' ? '#22c55e' :
+                            f === 'negative' ? '#ef4444' :
+                            f === 'neutral' ? '#f59e0b' : '#ccc'
+                          ),
+                        }}
+                      >
+                        {f.charAt(0).toUpperCase() + f.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {(() => {
+                  const filtered = reviews.filter(r => {
+                    if (reviewFilter === 'all') return true
+                    const s = (r.sentiment || '').toLowerCase()
+                    const rating = Number(r.overall_rating || r.rating || 0)
+                    if (reviewFilter === 'positive') return s === 'positive' || rating >= 4
+                    if (reviewFilter === 'negative') return s === 'negative' || rating <= 2
+                    if (reviewFilter === 'neutral') return s === 'neutral' || rating === 3
+                    return true
+                  })
+                  return filtered.length === 0 ? (
+                    <p style={{ margin: 0, color: '#666', fontSize: '0.85rem' }}>No reviews found for this restaurant.</p>
+                  ) : (
+                    <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                      {filtered.map((rev, idx) => (
+                        <li key={rev.id || idx} style={{ padding: '8px 0', borderTop: idx ? '1px solid #eee' : 'none' }}>
+                          <p style={{ margin: '0 0 6px 0', fontSize: '0.85rem' }}>{rev.review_text || rev.text || rev.message || ''}</p>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ fontWeight: 700, color: '#f59e0b' }}>{renderRatingStars(rev.overall_rating || rev.rating || 0)}</span>
+                              {rev.sentiment && (
+                                <span style={{
+                                  fontSize: '0.7rem', fontWeight: 700, padding: '1px 7px', borderRadius: '20px',
+                                  background: rev.sentiment === 'positive' ? '#dcfce7' : rev.sentiment === 'negative' ? '#fee2e2' : '#fef9c3',
+                                  color: rev.sentiment === 'positive' ? '#15803d' : rev.sentiment === 'negative' ? '#b91c1c' : '#92400e',
+                                }}>
+                                  {rev.sentiment}
+                                </span>
+                              )}
+                            </div>
+                            <small style={{ color: '#aaa' }}>{rev.updated_at ? new Date(rev.updated_at).toLocaleString() : ''}</small>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )
+                })()}
+              </>
             )}
           </div>
         )}
-      </div>
       </div>
     </div>
   )

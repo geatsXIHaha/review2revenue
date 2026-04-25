@@ -5,7 +5,7 @@ import { supabase } from './supabase'
 import { Login, logout } from './Login'
 import { Registration } from './components/Registration'
 import App from './App'
-import ChatPage from './ChatPage'
+import ChatPage from './ChatPage.jsx'
 
 export function ProtectedApp() {
   const [user, setUser] = useState(null)
