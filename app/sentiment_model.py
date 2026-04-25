@@ -76,3 +76,18 @@ def predict_sentiment_summary(reviews: List[str]) -> Optional[Dict[str, float]]:
         "neutral_ratio": round(neu / total, 3),
         "model_confidence": model_confidence,
     }
+
+def predict_sentiments_batch(reviews: List[str]) -> List[str]:
+    _load_model_once()
+    if _MODEL is None:
+        return ["unknown"] * len(reviews)
+    
+    clean_reviews = [r.strip() if isinstance(r, str) else "" for r in reviews]
+    if not clean_reviews:
+        return []
+        
+    try:
+        preds = _MODEL.predict(clean_reviews)
+        return [str(p).lower() for p in preds]
+    except Exception:
+        return ["unknown"] * len(reviews)

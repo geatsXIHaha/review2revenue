@@ -5,8 +5,10 @@ from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+import pandas as pd
+import io
 
 from .repository import (
     count_reviews_matching_keywords,
@@ -17,6 +19,7 @@ from .repository import (
     get_recent_reviews,
     get_reviews_by_keywords,
     get_existing_conversation_for_initial_pair,
+    insert_bulk_menu_items,
     list_chat_conversations,
     list_restaurants,
     save_chat_message,
@@ -29,6 +32,7 @@ from .schemas import (
     AskResponse,
     ChatHistoryResponse,
     ConversationSummary,
+    PredictBatchRequest,
     StartConversationRequest,
     StartConversationResponse,
 )
@@ -37,9 +41,15 @@ from .zai_client import ZAIClient
 
 app = FastAPI(title="Review2Revenue API", version="1.0.0")
 
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI()
+
+# Add this block right after creating the app instance
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], # Your React app's URL
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -183,7 +193,7 @@ Your goal is to understand the user's intent and provide accurate, helpful, and 
   • Do NOT switch into "informational list mode"
   • Do NOT remove explanations
   • Instead:
-      → explain “closest available alternatives based on food type and sentiment”
+      → explain "closest available alternatives based on food type and sentiment"
       → then continue normal recommendation structure
 
 19. CONSISTENCY RULE:
@@ -420,21 +430,14 @@ def _is_valid_lat_lng(lat: float, lng: float) -> bool:
 
 
 def _normalize_user_location(lat_raw: Any, lng_raw: Any) -> Tuple[Optional[float], Optional[float], str]:
-    """
-    Returns (lat, lng, source_note). If invalid, lat/lng are None.
-    """
     lat = _to_float(lat_raw)
     lng = _to_float(lng_raw)
     if lat is None or lng is None:
         return None, None, "invalid_or_missing"
-
     if _is_valid_lat_lng(lat, lng):
         return lat, lng, "as_provided"
-
-    # Obvious swap case: e.g. lat=101.x, lng=3.x
     if _is_valid_lat_lng(lng, lat):
         return lng, lat, "swapped_detected"
-
     return None, None, "out_of_range"
 
 
@@ -500,7 +503,6 @@ def _extract_restaurant_query_from_prompt(prompt: str) -> Optional[str]:
             candidate = _normalize_name_text(m.group(1))
             if len(candidate) >= 3:
                 return candidate
-    # Last fallback: if prompt starts with "what is ... <name>"
     tokens = p.split()
     if len(tokens) <= 6 and len(tokens[-1]) >= 3:
         return tokens[-1]
@@ -513,7 +515,6 @@ def _best_fuzzy_restaurant_match(query: str, restaurants: List[Dict]) -> Optiona
         return None
     q_compact = q.replace(" ", "")
 
-    # Fast path: SQL LIKE search first.
     sql_hits = search_restaurants_by_name(q, limit=3)
     if sql_hits:
         return sql_hits[0]
@@ -526,8 +527,6 @@ def _best_fuzzy_restaurant_match(query: str, restaurants: List[Dict]) -> Optiona
             continue
         name_compact = name.replace(" ", "")
 
-        # Strong deterministic boost for compact substring matches.
-        # Example: "mamating" should match "mama ting sarawak noodle ss2".
         if q_compact and q_compact in name_compact:
             contains_score = 1.0
         elif q_compact and name_compact.startswith(q_compact):
@@ -555,23 +554,10 @@ def _extract_menu_keywords(reviews: List[Dict], food_type: Optional[str] = None)
     text = " ".join(str(r.get("review_text") or r.get("text") or "") for r in reviews).lower()
     keywords: List[str] = []
     common_foods = [
-        "nasi lemak",
-        "fried chicken",
-        "burger",
-        "pasta",
-        "ramen",
-        "thai basil",
-        "laksa",
-        "rice bowl",
-        "grill",
-        "steak",
-        "satay",
-        "roti canai",
-        "mee goreng",
-        "ayam gepuk",
-        "cendol",
-        "teh tarik",
-        "coffee",
+        "nasi lemak", "fried chicken", "burger", "pasta", "ramen",
+        "thai basil", "laksa", "rice bowl", "grill", "steak",
+        "satay", "roti canai", "mee goreng", "ayam gepuk", "cendol",
+        "teh tarik", "coffee",
     ]
     for k in common_foods:
         if k in text and k not in keywords:
@@ -619,15 +605,9 @@ def _review_insights(reviews: List[Dict]) -> Dict[str, List[str]]:
             ["slow", "expensive", "mahal", "cold", "rude", "dirty", "small portion", "crowded"],
         ),
     }
-def _aspect_sentiment_analysis(reviews: List[Dict]) -> Dict[str, Dict]:
-    """
-    Extract aspect-level sentiment for:
-    - portion
-    - price
-    - service
-    - taste
-    """
 
+
+def _aspect_sentiment_analysis(reviews: List[Dict]) -> Dict[str, Dict]:
     aspect_rules = {
         "portion": {
             "keywords": ["portion", "serving", "size", "banyak", "large", "small"],
@@ -652,29 +632,22 @@ def _aspect_sentiment_analysis(reviews: List[Dict]) -> Dict[str, Dict]:
     }
 
     results = {}
-
     for aspect, rule in aspect_rules.items():
         pos = 0
         neg = 0
         total_mentions = 0
-
         for r in reviews:
             text = str(r.get("review_text") or r.get("text") or "").lower()
-
             if not text.strip():
                 continue
-
             if any(k in text for k in rule["keywords"]):
                 total_mentions += 1
-
                 if any(p in text for p in rule["pos"]):
                     pos += 1
                 if any(n in text for n in rule["neg"]):
                     neg += 1
-
         total = pos + neg
         score = (pos - neg) / total if total > 0 else 0
-
         results[aspect] = {
             "positive_mentions": pos,
             "negative_mentions": neg,
@@ -686,7 +659,6 @@ def _aspect_sentiment_analysis(reviews: List[Dict]) -> Dict[str, Dict]:
                 "mixed"
             )
         }
-
     return results
 
 
@@ -777,28 +749,12 @@ def _reviews_for_requested_period(reviews: List[Dict], prompt: str, now_myt: dat
 
 def _summarize_review_patterns(reviews: List[Dict]) -> Dict[str, Any]:
     positive_terms = [
-        "delicious",
-        "sedap",
-        "tasty",
-        "friendly",
-        "clean",
-        "fast",
-        "value",
-        "reasonable",
-        "worth",
-        "fresh",
+        "delicious", "sedap", "tasty", "friendly", "clean",
+        "fast", "value", "reasonable", "worth", "fresh",
     ]
     negative_terms = [
-        "slow",
-        "late",
-        "rude",
-        "dirty",
-        "cold",
-        "expensive",
-        "mahal",
-        "small portion",
-        "missing",
-        "inconsistent",
+        "slow", "late", "rude", "dirty", "cold",
+        "expensive", "mahal", "small portion", "missing", "inconsistent",
     ]
     pos_counts = {k: 0 for k in positive_terms}
     neg_counts = {k: 0 for k in negative_terms}
@@ -862,11 +818,12 @@ def _distance_km_for_row(row: Dict, user_lat: float, user_lng: float) -> Optiona
     if not _is_valid_lat_lng(rlat, rlng):
         return None
     try:
-        # Keep raw precision internally; round only for display.
         return _haversine_km(user_lat, user_lng, rlat, rlng)
     except (TypeError, ValueError):
         return None
 
+
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health() -> Dict[str, str]:
@@ -874,7 +831,10 @@ def health() -> Dict[str, str]:
 
 
 @app.get("/api/restaurants/search")
-def search_restaurants(query: str = Query(min_length=1), limit: int = Query(default=8, ge=1, le=20)) -> Dict[str, List[Dict]]:
+def search_restaurants(
+    query: str = Query(min_length=1),
+    limit: int = Query(default=8, ge=1, le=20),
+) -> Dict[str, List[Dict]]:
     try:
         rows = search_restaurants_by_name(query_text=query, limit=limit)
     except Exception:
@@ -884,13 +844,11 @@ def search_restaurants(query: str = Query(min_length=1), limit: int = Query(defa
 
 @app.get("/api/restaurants/by-store-id")
 def get_restaurant_by_store_id(store_id: str = Query(min_length=1)) -> Dict:
-    """Get a restaurant by its store_id"""
     try:
         restaurant = find_restaurant_by_store_id(store_id)
         if restaurant:
             return {"restaurant": restaurant}
-        else:
-            raise HTTPException(status_code=404, detail=f"Restaurant with store_id '{store_id}' not found")
+        raise HTTPException(status_code=404, detail=f"Restaurant with store_id '{store_id}' not found")
     except HTTPException:
         raise
     except Exception as e:
@@ -898,8 +856,10 @@ def get_restaurant_by_store_id(store_id: str = Query(min_length=1)) -> Dict:
 
 
 @app.get("/api/reviews/by-store-id")
-def get_reviews_by_store_id(store_id: str = Query(min_length=1), limit: int = Query(default=100, ge=1, le=500)) -> Dict[str, List[Dict]]:
-    """Get restaurant reviews sorted by newest first."""
+def get_reviews_by_store_id(
+    store_id: str = Query(min_length=1),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> Dict[str, List[Dict]]:
     try:
         reviews = get_recent_reviews(store_id, limit=limit)
         clean_reviews = [_review_brief(r) for r in reviews if (r.get("review_text") or "").strip()]
@@ -913,19 +873,23 @@ def sentiment_engine() -> Dict[str, str]:
     return {"engine": get_sentiment_engine_status()}
 
 
+@app.post("/api/sentiment/predict-batch")
+def predict_batch(req: PredictBatchRequest) -> Dict[str, List[str]]:
+    from .sentiment_model import predict_sentiments_batch
+    preds = predict_sentiments_batch(req.reviews)
+    return {"predictions": preds}
+
+
 @app.post("/api/ask", response_model=AskResponse)
 def ask(payload: AskRequest) -> AskResponse:
     conversation_id = (payload.conversation_id or str(uuid4())).strip()
     history = get_chat_history(conversation_id, limit=20)
 
     if payload.role == "diner":
-        response = _handle_diner(payload, conversation_id=conversation_id, history=history)
-        return response
+        return _handle_diner(payload, conversation_id=conversation_id, history=history)
     if payload.role == "vendor":
-        response = _handle_vendor(payload, conversation_id=conversation_id, history=history)
-        return response
+        return _handle_vendor(payload, conversation_id=conversation_id, history=history)
     raise HTTPException(status_code=400, detail="Unsupported role")
-
 
 
 @app.get("/api/chat/history", response_model=ChatHistoryResponse)
@@ -982,6 +946,86 @@ def start_chat_conversation(payload: StartConversationRequest) -> StartConversat
     return StartConversationResponse(conversation_id=conversation_id)
 
 
+@app.post("/api/menu/upload")
+async def upload_menu(
+    file: UploadFile = File(...),
+    store_id: Optional[str] = Form(None),
+) -> Dict:
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files are allowed.")
+
+    try:
+        contents = await file.read()
+        df = pd.read_csv(io.BytesIO(contents))
+
+        required_columns = ["menu_id", "store_id", "restaurant_name", "item_name", "category"]
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            raise HTTPException(
+                status_code=400,
+                detail=f"CSV is missing required columns: {', '.join(missing_columns)}",
+            )
+
+        # Default optional columns if not present in CSV
+        if "price_rm" not in df.columns:
+            df["price_rm"] = None
+        if "source" not in df.columns:
+            df["source"] = "manual_upload"
+
+        df = df.where(pd.notnull(df), None)
+        records_to_insert = df.to_dict(orient="records")
+        inserted_count = insert_bulk_menu_items(records_to_insert)
+
+        return {"message": "Menu inserted successfully!", "inserted_count": inserted_count}
+
+    except pd.errors.EmptyDataError:
+        raise HTTPException(status_code=400, detail="The uploaded CSV file is empty.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Upload error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+@app.post("/api/reviews/upload")
+async def upload_reviews(
+    file: UploadFile = File(...),
+    store_id: str = Form(...),
+) -> Dict:
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Only CSV files are allowed.")
+
+    try:
+        contents = await file.read()
+        df = pd.read_csv(io.BytesIO(contents))
+
+        required_columns = ["review_text", "overall_rating", "food_rating"]
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            raise HTTPException(
+                status_code=400,
+                detail=f"CSV is missing required columns: {', '.join(missing_columns)}",
+            )
+
+        if "rider_rating" not in df.columns:
+            df["rider_rating"] = None
+
+        df["store_id"] = store_id  # force correct store_id from logged-in user
+        df = df.where(pd.notnull(df), None)
+        records = df[["store_id", "review_text", "overall_rating", "food_rating", "rider_rating"]].to_dict(orient="records")
+
+        from .repository import insert_bulk_reviews
+        inserted_count = insert_bulk_reviews(records)
+        return {"message": "Reviews inserted successfully!", "inserted_count": inserted_count}
+
+    except pd.errors.EmptyDataError:
+        raise HTTPException(status_code=400, detail="The uploaded CSV file is empty.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Handlers ──────────────────────────────────────────────────────────────────
+
 def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]) -> AskResponse:
     restaurants = list_restaurants(limit=60)
     if not restaurants:
@@ -1004,16 +1048,16 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
         user_lng if loc_ok else None,
     )
     nearest_mode = _nearest_prompt(payload.prompt.lower())
-    specific_restaurant_query = (payload.restaurant_name or "").strip() or (_extract_restaurant_query_from_prompt(payload.prompt) or "")
+    specific_restaurant_query = (payload.restaurant_name or "").strip() or (
+        _extract_restaurant_query_from_prompt(payload.prompt) or ""
+    )
     specific_match = None
     if specific_restaurant_query:
-        # Use a wider candidate pool for fuzzy name resolution.
         match_pool = restaurants
         if len(match_pool) < 300:
             match_pool = list_restaurants(limit=3000)
         specific_match = _best_fuzzy_restaurant_match(specific_restaurant_query, match_pool)
 
-    # Hard guard: nearest queries require explicit user coordinates.
     if nearest_mode and not loc_ok:
         message = (
             "I can find the nearest restaurants once your location is available. "
@@ -1030,10 +1074,8 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
     selected_rows: List[Dict] = []
 
     if specific_match is not None:
-        # Explicit/suspected restaurant lookup: prioritize the best fuzzy DB match.
         selected_rows = [specific_match]
     elif nearest_mode and loc_ok:
-        # Select from all candidates by actual backend-computed distance first.
         by_distance: List[Tuple[float, float, Dict]] = []
         missing_distance: List[Tuple[float, Dict]] = []
         for score, row in ranked:
@@ -1042,7 +1084,6 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
                 missing_distance.append((score, row))
             else:
                 by_distance.append((d, score, row))
-
         by_distance.sort(key=lambda item: (item[0], -item[1]))
         selected_rows = [row for _, _, row in by_distance[:5]]
         if len(selected_rows) < 5:
@@ -1057,7 +1098,7 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
         metric = metrics_map.get(row["store_id"], {})
         recent_raw = get_recent_reviews(row["store_id"], limit=3)
         relevant_raw = get_reviews_by_keywords(row["store_id"], keywords, limit=8)
-        seen_txt = set()
+        seen_txt: set = set()
         recent_list: List[Dict] = []
         for r in recent_raw:
             t = (r.get("review_text") or "").strip()
@@ -1079,7 +1120,6 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
         distance_km = None
         if loc_ok:
             distance_km = _distance_km_for_row(row, user_lat, user_lng)
-        # Always include distance_km key for deterministic downstream behavior.
         block["distance_km"] = round(distance_km, 2) if distance_km is not None else None
         block["distance_calc_method"] = "backend_haversine" if distance_km is not None else None
 
@@ -1108,7 +1148,6 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
         )
 
     if nearest_mode and loc_ok:
-        # Preserve deterministic nearest-first ordering for final payload.
         context_items.sort(
             key=lambda item: (
                 item.get("distance_km") is None,
@@ -1155,8 +1194,8 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
             upsert_conversation(conversation_id, payload.user_id, payload.role, "Untitled chat")
         save_chat_message(conversation_id, "user", payload.user_id or "user", payload.prompt, payload.restaurant_name)
         save_chat_message(conversation_id, "assistant", "ai", answer, payload.restaurant_name)
-
     return AskResponse(answer=answer, conversation_id=conversation_id, source="database", confidence=0.82, restaurants=context_items)
+
 
 def _handle_vendor(payload: AskRequest, conversation_id: str, history: List[Dict]) -> AskResponse:
     vendor_intent = _detect_vendor_intent(payload.prompt)
@@ -1241,6 +1280,8 @@ def _handle_vendor(payload: AskRequest, conversation_id: str, history: List[Dict
     return AskResponse(answer=message, conversation_id=conversation_id, source="fallback", confidence=0.45)
 
 
+# ── Ranking ───────────────────────────────────────────────────────────────────
+
 def _rank_restaurants(
     prompt: str,
     restaurants: List[Dict],
@@ -1252,16 +1293,9 @@ def _rank_restaurants(
 ) -> List[Tuple[float, Dict]]:
     prompt_l = prompt.lower()
     cuisine_keywords = [
-        "nasi lemak",
-        "malaysian",
-        "korean",
-        "japanese",
-        "western",
-        "indian",
-        "thai",
-        "chinese",
+        "nasi lemak", "malaysian", "korean", "japanese",
+        "western", "indian", "thai", "chinese",
     ]
-
     picked_cuisine = ""
     for keyword in cuisine_keywords:
         if keyword in prompt_l:
@@ -1286,10 +1320,8 @@ def _rank_restaurants(
 
         if picked_cuisine and (picked_cuisine in food_type or picked_cuisine in name):
             score += 22.0
-
         if cheap_mode and avg_rating >= 4.0:
             score += 5.0
-
         if fine_mode and avg_rating >= 4.4:
             score += 8.0
 
@@ -1355,4 +1387,3 @@ def _simple_sentiment_summary(reviews: List[str]) -> Dict[str, float]:
         "neutral_ratio": round(max(total - pos - neg, 0) / total, 3),
         "model_confidence": 0.35,
     }
-

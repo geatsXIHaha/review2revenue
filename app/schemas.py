@@ -38,7 +38,6 @@ class ConversationSummary(BaseModel):
     restaurant_name: Optional[str] = None
     updated_at: str
 
-
 class StartConversationRequest(BaseModel):
     conversation_id: Optional[str] = Field(default=None, max_length=128)
     user_id: str = Field(min_length=1, max_length=128)
@@ -49,3 +48,7 @@ class StartConversationRequest(BaseModel):
 
 class StartConversationResponse(BaseModel):
     conversation_id: str
+
+
+class PredictBatchRequest(BaseModel):
+    reviews: List[str]

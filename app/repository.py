@@ -449,7 +449,6 @@ def find_restaurant_by_name(name: str) -> Optional[Dict]:
 
 
 def find_restaurant_by_store_id(store_id: str) -> Optional[Dict]:
-    """Find a restaurant by its store_id"""
     query = text(
         _RESTAURANT_SELECT_SQL
         + """
@@ -682,3 +681,45 @@ def count_reviews_matching_keywords(store_ids: List[str], keywords: List[str]) -
             if c:
                 counts[str(sid)] = c
         return counts
+
+
+def insert_bulk_menu_items(records: list) -> int:
+    if not records:
+        return 0
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO menu_items 
+                        (menu_id, store_id, restaurant_name, item_name, category, price_rm, source)
+                    VALUES 
+                        (:menu_id, :store_id, :restaurant_name, :item_name, :category, :price_rm, :source)
+                """),
+                records
+            )
+        return len(records)
+    except Exception as e:
+        print(f"Database bulk insert error: {e}")
+        raise Exception(f"Failed to insert records into the database: {e}")
+
+
+def insert_bulk_reviews(records: list) -> int:
+    if not records:
+        return 0
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO reviews 
+                        (uuid, store_id, review_text, overall_rating, food_rating, rider_rating, updated_at)
+                    VALUES 
+                        (gen_random_uuid(), :store_id, :review_text, :overall_rating, :food_rating, :rider_rating, NOW())
+                """),
+                records
+            )
+        return len(records)
+    except Exception as e:
+        print(f"Review bulk insert error: {e}")
+        raise Exception(f"Failed to insert reviews: {e}")
