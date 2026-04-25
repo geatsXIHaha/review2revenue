@@ -64,6 +64,7 @@ function App({ userProfile }) {
   const [lastSubmittedPrompt, setLastSubmittedPrompt] = useState('')
   const [isVendorRestaurantLoading, setIsVendorRestaurantLoading] = useState(false)
   const [showInsertReviewModal, setShowInsertReviewModal] = useState(false)
+  const [showInsertMenuModal, setShowInsertMenuModal] = useState(false)
   const [isInsertingReview, setIsInsertingReview] = useState(false)
   const [insertReviewStatus, setInsertReviewStatus] = useState('')
   const [recommendedRestaurants, setRecommendedRestaurants] = useState([])
@@ -368,6 +369,9 @@ function App({ userProfile }) {
     if (showInsertReviewModal) {
       setShowInsertReviewModal(false)
     }
+    if (showInsertMenuModal) {
+      setShowInsertMenuModal(false)
+    }
     if (!userProfile?.store_id) {
       setError('Unable to load reviews: store id is missing.')
       return
@@ -624,7 +628,7 @@ function App({ userProfile }) {
                   onClick={handleToggleVendorReviews}
                   disabled={isLoadingVendorReviews || isVendorRestaurantLoading || !vendorRestaurant}
                 >
-                  {isLoadingVendorReviews ? 'Loading...' : showVendorReviews ? 'Hide Reviews' : 'Reviews'}
+                  {isLoadingVendorReviews ? 'Loading...' : showVendorReviews ? 'Hide Review' : 'View Review'}
                 </button>
                 <button
                   type="button"
@@ -634,10 +638,29 @@ function App({ userProfile }) {
                     if (!showInsertReviewModal && showVendorReviews) {
                        setShowVendorReviews(false);
                     }
+                    if (!showInsertReviewModal && showInsertMenuModal) {
+                      setShowInsertMenuModal(false);
+                    }
                   }}
                   disabled={!vendorRestaurant}
                 >
-                  {showInsertReviewModal ? 'Close Upload' : 'Insert Reviews'}
+                  {showInsertReviewModal ? 'Close Upload' : 'Insert Review'}
+                </button>
+                <button
+                  type="button"
+                  className="primary secondary"
+                  onClick={() => {
+                    setShowInsertMenuModal(!showInsertMenuModal);
+                    if (!showInsertMenuModal && showVendorReviews) {
+                      setShowVendorReviews(false);
+                    }
+                    if (!showInsertMenuModal && showInsertReviewModal) {
+                      setShowInsertReviewModal(false);
+                    }
+                  }}
+                  disabled={!vendorRestaurant}
+                >
+                  {showInsertMenuModal ? 'Close Upload' : 'Insert Menu'}
                 </button>
               </div>
 
@@ -702,6 +725,67 @@ function App({ userProfile }) {
                 </div>
               )}
 
+              {showInsertMenuModal && (
+                <div style={{
+                  marginTop: '15px',
+                  padding: '20px',
+                  background: 'rgba(255, 255, 255, 0.95)',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(100, 200, 150, 0.4)',
+                  boxShadow: '0 4px 12px rgba(0,0,0,0.05)'
+                }}>
+                  <h3 style={{ marginTop: 0, marginBottom: '5px', color: '#333' }}>Upload Menu (CSV)</h3>
+                  <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '15px' }}>
+                    CSV must include <strong>"menu_id"</strong>, <strong>"store_id"</strong>, <strong>"restaurant_name"</strong>, <strong>"item_name"</strong>, and <strong>"category"</strong> headers.
+                  </p>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    <div style={{
+                      padding: '15px',
+                      border: '2px dashed #ccc',
+                      borderRadius: '8px',
+                      background: '#fafafa',
+                      display: 'flex',
+                      alignItems: 'center'
+                    }}>
+                      <input
+                        id="menu-upload-input"
+                        type="file"
+                        accept=".csv"
+                        onChange={handleFileChange}
+                        disabled={isLoadingUpload}
+                        style={{ flex: 1 }}
+                      />
+                    </div>
+
+                    {uploadStatus && (
+                      <p style={{
+                        margin: 0,
+                        padding: '8px 12px',
+                        borderRadius: '6px',
+                        background: uploadStatus.includes('❌') || uploadStatus.startsWith('Error') ? '#ffebee' : '#e8f5e9',
+                        color: uploadStatus.includes('❌') || uploadStatus.startsWith('Error') ? '#c62828' : '#2e7d32',
+                        fontWeight: '500'
+                      }}>
+                        {uploadStatus}
+                      </p>
+                    )}
+
+                    <div style={{ marginTop: '5px' }}>
+                      <button
+                        type="button"
+                        className="primary"
+                        onClick={handleInsertMenu}
+                        disabled={isLoadingUpload || !menuFile}
+                        style={{ minWidth: '120px' }}
+                      >
+                        {isLoadingUpload ? 'Uploading...' : 'Upload CSV'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {showVendorReviews ? (
                 <section className="vendor-reviews" aria-live="polite">
                   <h3>Latest Reviews (Newest First)</h3>
@@ -732,48 +816,6 @@ function App({ userProfile }) {
             </>
           )}
         </form>
-
-        {/* --- MENU UPLOAD SECTION (Inside return, only for Vendors) --- */}
-        {role === 'vendor' && (
-          <div className="bg-white p-6 rounded-xl shadow-sm mb-6 max-w-2xl mx-auto border border-gray-100" style={{ marginTop: '2rem' }}>
-            <h3 className="text-lg font-bold text-gray-800 mb-2">Bulk Upload Menu</h3>
-            <p className="text-sm text-gray-500 mb-4">
-              Upload a CSV file with columns: menu_id, store_id, restaurant_name, item_name, category.
-            </p>
-            
-            <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-              <input 
-                type="file" 
-                accept=".csv" 
-                onChange={handleFileChange}
-                style={{ padding: '8px', border: '1px solid #ddd', borderRadius: '4px', width: '100%' }}
-              />
-              <button 
-                type="button" 
-                onClick={handleInsertMenu}
-                disabled={!menuFile || isLoadingUpload}
-                className="primary"
-                style={{ opacity: (!menuFile || isLoadingUpload) ? 0.5 : 1 }}
-              >
-                {isLoadingUpload ? "Uploading..." : "Upload CSV"}
-              </button>
-            </div>
-            
-            {uploadStatus && (
-              <div style={{
-                marginTop: '1rem',
-                padding: '12px',
-                borderRadius: '6px',
-                backgroundColor: uploadStatus.includes('❌') ? '#ffebee' : '#e8f5e9',
-                color: uploadStatus.includes('❌') ? '#c62828' : '#2e7d32',
-                fontSize: '0.9rem'
-              }}>
-                {uploadStatus}
-              </div>
-            )}
-          </div>
-        )}
-        {/* --- END MENU UPLOAD SECTION --- */}
 
         <div className="example-block">
           <h2>Try one of these prompts</h2>
