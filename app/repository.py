@@ -722,6 +722,21 @@ def count_reviews_matching_keywords(store_ids: List[str], keywords: List[str]) -
         return counts
 
 
+def get_menu_items_by_store_id(store_id: str, limit: int = 200) -> List[Dict]:
+    query = text(
+        """
+        SELECT menu_id, store_id, restaurant_name, item_name, category, price_rm, source, is_available, updated_at
+        FROM menu_items
+        WHERE store_id = :store_id
+        ORDER BY category ASC NULLS LAST, item_name ASC NULLS LAST
+        LIMIT :limit
+        """
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(query, {"store_id": store_id, "limit": limit}).mappings().all()
+    return [dict(row) for row in rows]
+
+
 def insert_bulk_menu_items(records: list) -> int:
     if not records:
         return 0
@@ -731,16 +746,17 @@ def insert_bulk_menu_items(records: list) -> int:
             conn.execute(
                 text("""
                     INSERT INTO menu_items 
-                        (menu_id, store_id, restaurant_name, item_name, category, price_rm, source)
+                        (menu_id, store_id, restaurant_name, item_name, category, price_rm, source, is_available)
                     VALUES 
-                        (:menu_id, :store_id, :restaurant_name, :item_name, :category, :price_rm, :source)
+                        (:menu_id, :store_id, :restaurant_name, :item_name, :category, :price_rm, :source, :is_available)
                     ON CONFLICT (menu_id) 
                     DO UPDATE SET 
                         restaurant_name = EXCLUDED.restaurant_name,
                         item_name = EXCLUDED.item_name,
                         category = EXCLUDED.category,
                         price_rm = EXCLUDED.price_rm,
-                        source = EXCLUDED.source
+                        source = EXCLUDED.source,
+                        is_available = EXCLUDED.is_available
                 """),
                 records
             )

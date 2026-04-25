@@ -4,6 +4,7 @@ import './ChatPage.css'
 import { useGeolocation } from './hooks/useGeolocation';
 
 const API_BASE = 'http://localhost:8000'
+const CHAT_CACHE_PREFIX = 'review2revenue.chatCache.v1'
 
 function isNearestIntent(text) {
   const q = String(text || '').toLowerCase()
@@ -503,6 +504,7 @@ function ChatPage({ userProfile }) {
   const [chatMessages, setChatMessages] = useState([])
   const [conversationId, setConversationId] = useState('')
   const [conversations, setConversations] = useState([])
+  const [messagesByConversation, setMessagesByConversation] = useState({})
   const [error, setError] = useState('')
   const [isTransitioning, setIsTransitioning] = useState(false)
   const [isHistoryLoading, setIsHistoryLoading] = useState(false)
@@ -510,6 +512,7 @@ function ChatPage({ userProfile }) {
   const optimisticConversationIdRef = useRef('')
   const historyRequestRef = useRef(0)
   const threadRef = useRef(null)
+  const messageCacheRef = useRef({})
   const [vendorRestaurantName, setVendorRestaurantName] = useState('')
 
   const { coords, cityName, error: locError } = useGeolocation();
@@ -536,6 +539,14 @@ function ChatPage({ userProfile }) {
     setConversations((prev) => mergeConversationRows(prev, rows))
   }
 
+  function cacheConversationMessages(targetConversationId, messages) {
+    if (!targetConversationId) return
+    setMessagesByConversation((prev) => ({
+      ...prev,
+      [targetConversationId]: Array.isArray(messages) ? messages : [],
+    }))
+  }
+
   async function fetchConversations(roleValue) {
     try {
       if (!userId) return []
@@ -543,12 +554,17 @@ function ChatPage({ userProfile }) {
         `${API_BASE}/api/chat/conversations?role=${encodeURIComponent(roleValue)}&user_id=${encodeURIComponent(userId)}&limit=100`,
       )
       if (!response.ok) return []
-      return await response.json()
+      const data = await response.json()
+      return normalizeConversationRows(data)
     } catch { return [] }
   }
 
   async function fetchHistory(roleValue, convId, requestId) {
     if (!convId) { setChatMessages([]); return }
+    const cachedMessages = messageCacheRef.current?.[convId]
+    if (Array.isArray(cachedMessages) && cachedMessages.length > 0) {
+      setChatMessages(cachedMessages)
+    }
     setIsHistoryLoading(true)
     const pending = getPendingChatTransition()
     const isPendingConversation = pending?.conversation_id === convId && pending?.role === role && pending?.user_id === userId
@@ -565,7 +581,7 @@ function ChatPage({ userProfile }) {
         }
 
         const data = await response.json()
-        const messages = (data.messages || []).map((m, index) => ({
+        const messages = normalizeHistoryMessages(data).map((m, index) => ({
           id: m.id ? `${convId}-${m.id}` : `${convId}-${index}`,
           role: m.role === 'assistant' ? 'assistant' : 'user',
           message: m.message || '',
@@ -576,6 +592,7 @@ function ChatPage({ userProfile }) {
 
         if (messages.length > 0) {
           setChatMessages(messages)
+          cacheConversationMessages(convId, messages)
           setIsHistoryLoading(false)
           return
         }
@@ -595,38 +612,62 @@ function ChatPage({ userProfile }) {
       }
     }
 
-    if (requestId === historyRequestRef.current && !isPendingConversation && convId !== optimisticConversationIdRef.current) {
+    if (
+      requestId === historyRequestRef.current
+      && !isPendingConversation
+      && convId !== optimisticConversationIdRef.current
+      && (!Array.isArray(cachedMessages) || cachedMessages.length === 0)
+    ) {
       setChatMessages([])
     }
     setIsHistoryLoading(false)
   }
 
   useEffect(() => {
+    messageCacheRef.current = messagesByConversation
+  }, [messagesByConversation])
+
+  useEffect(() => {
+    writeChatCache(userId, role, conversations, messagesByConversation)
+  }, [userId, role, conversations, messagesByConversation])
+
+  useEffect(() => {
     const pending = getPendingChatTransition()
     const pendingConversationId = pending?.conversation_id && pending?.role === role && pending?.user_id === userId ? pending.conversation_id : ''
 
     async function initRoleChats() {
+      const cached = readChatCache(userId, role)
+      setConversationRows(cached.conversations)
+      setMessagesByConversation(cached.messagesByConversation)
+
       const rows = await fetchConversations(role)
-      setConversationRows(rows)
+      const mergedRows = mergeConversationRows(cached.conversations, rows)
+      setConversations(mergedRows)
       if (pendingConversationId) {
         optimisticConversationIdRef.current = pendingConversationId
         setConversationId(pendingConversationId)
         return
       }
-      if (rows.length > 0) setConversationId(rows[0].conversation_id)
+      if (mergedRows.length > 0) setConversationId(mergedRows[0].conversation_id)
       else setConversationId(createConversationId())
     }
     initRoleChats()
   }, [role, userId])
 
   useEffect(() => {
-    if (isTransitioning && sessionStorage.getItem('pendingChatTransition')) {
-      return
-    }
+    const pending = getPendingChatTransition()
+    const shouldPauseHistoryFetch =
+      isTransitioning
+      && pending?.conversation_id
+      && pending?.conversation_id === conversationId
+      && pending?.role === role
+      && pending?.user_id === userId
+    if (shouldPauseHistoryFetch) return
+
     const requestId = historyRequestRef.current + 1
     historyRequestRef.current = requestId
     fetchHistory(role, conversationId, requestId)
-  }, [role, conversationId, isTransitioning])
+  }, [role, conversationId, isTransitioning, userId])
 
   useEffect(() => {
     if (!userId) return
@@ -666,15 +707,19 @@ function ChatPage({ userProfile }) {
       ]
       setConversationId(pendingConversationId)
       setChatMessages(optimisticMessages)
+      cacheConversationMessages(pendingConversationId, optimisticMessages)
       upsertConversationPreview(pendingConversationId, pendingConversationId, pending.answer)
       sessionStorage.setItem(
         'pendingChatTransition',
         JSON.stringify({ ...pending, conversation_id: pendingConversationId }),
       )
       try {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 12000)
         const response = await fetch(`${API_BASE}/api/chat/start`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             conversation_id: pendingConversationId,
             user_id: userId,
@@ -683,6 +728,7 @@ function ChatPage({ userProfile }) {
             answer: pending.answer,
           }),
         })
+        clearTimeout(timeoutId)
         if (!response.ok) throw new Error('Failed to initialize chat conversation.')
 
         if (cancelled) return
@@ -696,10 +742,15 @@ function ChatPage({ userProfile }) {
         const rows = await fetchConversations(role)
         if (!cancelled) setConversationRows(rows)
       } catch (transitionError) {
-        if (!cancelled) setError(transitionError.message || 'Failed to initialize chat conversation.')
-        transitionStartedRef.current = false
+        sessionStorage.removeItem('pendingChatTransition')
+        if (!cancelled) {
+          setError(transitionError?.name === 'AbortError' ? 'Chat initialization timed out. You can continue chatting and messages will sync on next send.' : (transitionError.message || 'Failed to initialize chat conversation.'))
+          setChatMessages(optimisticMessages)
+          cacheConversationMessages(pendingConversationId, optimisticMessages)
+        }
       } finally {
-        if (!cancelled) setIsTransitioning(false)
+        transitionStartedRef.current = false
+        setIsTransitioning(false)
       }
     }
 
@@ -756,7 +807,11 @@ function ChatPage({ userProfile }) {
 
     const externalReviews = externalReviewsText.split('\n').map((l) => l.trim()).filter((l) => l.length > 0)
     const userMessage = { id: `u-${Date.now()}`, role: 'user', message: submittedPrompt, restaurants: [] }
-    setChatMessages((prev) => [...prev, userMessage])
+    setChatMessages((prev) => {
+      const next = [...prev, userMessage]
+      cacheConversationMessages(activeConversationId, next)
+      return next
+    })
     setPrompt('')
     upsertConversationPreview(activeConversationId, activeConversationId, submittedPrompt)
     setIsLoading(true)
@@ -770,7 +825,11 @@ function ChatPage({ userProfile }) {
         locationPayload = { user_lat: loc.lat, user_lng: loc.lng }
       } catch (locErr) {
         setError(`Location is required for nearest queries. ${locErr.message}`)
-        setChatMessages((prev) => prev.slice(0, Math.max(prev.length - 1, 0)))
+        setChatMessages((prev) => {
+          const next = prev.slice(0, Math.max(prev.length - 1, 0))
+          cacheConversationMessages(activeConversationId, next)
+          return next
+        })
         setIsLoading(false)
         return
       }
@@ -802,17 +861,31 @@ function ChatPage({ userProfile }) {
         restaurants: Array.isArray(data.restaurants) ? data.restaurants : [],
       }
 
-      setChatMessages((prev) => [...prev, assistantMessage])
+      setChatMessages((prev) => {
+        const next = [...prev, assistantMessage]
+        cacheConversationMessages(activeConversationId, next)
+        return next
+      })
       const persistedConversationId = data.conversation_id || activeConversationId
       setConversationId(persistedConversationId)
       optimisticConversationIdRef.current = persistedConversationId
+      if (persistedConversationId !== activeConversationId) {
+        const sourceMessages = messageCacheRef.current?.[activeConversationId] || []
+        if (sourceMessages.length > 0) {
+          cacheConversationMessages(persistedConversationId, sourceMessages)
+        }
+      }
       upsertConversationPreview(activeConversationId, persistedConversationId, data.answer || submittedPrompt, data.updated_at)
 
       const rows = await fetchConversations(role)
       setConversationRows(rows)
     } catch (submitError) {
       setError(submitError.message)
-      setChatMessages((prev) => prev.slice(0, Math.max(prev.length - 1, 0)))
+      setChatMessages((prev) => {
+        const next = prev.slice(0, Math.max(prev.length - 1, 0))
+        cacheConversationMessages(activeConversationId, next)
+        return next
+      })
     } finally {
       setIsLoading(false)
     }
@@ -823,6 +896,7 @@ function ChatPage({ userProfile }) {
     optimisticConversationIdRef.current = nextConversationId
     setConversationId(nextConversationId)
     setChatMessages([])
+    cacheConversationMessages(nextConversationId, [])
     setPrompt('')
     setError('')
     upsertConversationPreview(nextConversationId, nextConversationId, 'Untitled chat')
@@ -842,6 +916,27 @@ function ChatPage({ userProfile }) {
     return found ? shortPreview(found.last_message) : 'New chat'
   }, [conversations, conversationId])
 
+  useEffect(() => {
+    if (!conversationId) return
+    const exists = conversations.some((conversation) => conversation.conversation_id === conversationId)
+    if (exists) return
+
+    const pending = getPendingChatTransition()
+    const pendingQuestion =
+      pending?.conversation_id === conversationId
+      && pending?.role === role
+      && pending?.user_id === userId
+      ? pending.question
+      : ''
+
+    const latestMessage =
+      chatMessages.length > 0
+        ? chatMessages[chatMessages.length - 1]?.message
+        : (pendingQuestion || 'Untitled chat')
+
+    upsertConversationPreview(conversationId, conversationId, latestMessage || 'Untitled chat')
+  }, [conversationId, conversations, chatMessages, isTransitioning, role, userId])
+
   return (
     <main className={role === 'vendor' ? 'chat-page chat-page--vendor' : 'chat-page'}>
       <aside className="chat-sidebar">
@@ -860,7 +955,13 @@ function ChatPage({ userProfile }) {
               <button
                 type="button"
                 className={conversationId === conversation.conversation_id ? 'conversation-item active' : 'conversation-item'}
-                onClick={() => setConversationId(conversation.conversation_id)}
+                onClick={() => {
+                  setConversationId(conversation.conversation_id)
+                  const cachedMessages = messageCacheRef.current?.[conversation.conversation_id]
+                  if (Array.isArray(cachedMessages) && cachedMessages.length > 0) {
+                    setChatMessages(cachedMessages)
+                  }
+                }}
               >
                 <span>{shortPreview(conversation.last_message)}</span>
                 <small>{new Date(conversation.updated_at).toLocaleString()}</small>

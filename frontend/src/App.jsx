@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import { supabase } from './supabase'
 import './App.css'
@@ -58,8 +58,14 @@ function App({ userProfile }) {
   const [sentimentEngine, setSentimentEngine] = useState('unknown')
   const [vendorRestaurant, setVendorRestaurant] = useState(null)
   const [vendorReviews, setVendorReviews] = useState([])
+  const [vendorReviewFilter, setVendorReviewFilter] = useState('all')
   const [showVendorReviews, setShowVendorReviews] = useState(false)
   const [isLoadingVendorReviews, setIsLoadingVendorReviews] = useState(false)
+  const [vendorMenuItems, setVendorMenuItems] = useState([])
+  const [showVendorMenu, setShowVendorMenu] = useState(false)
+  const [isLoadingVendorMenu, setIsLoadingVendorMenu] = useState(false)
+  const [vendorMenuStatus, setVendorMenuStatus] = useState('')
+  const [vendorMenuSortBy, setVendorMenuSortBy] = useState('price')
   const [isStartingChat, setIsStartingChat] = useState(false)
   const [lastSubmittedPrompt, setLastSubmittedPrompt] = useState('')
   const [isVendorRestaurantLoading, setIsVendorRestaurantLoading] = useState(false)
@@ -379,6 +385,9 @@ function App({ userProfile }) {
     setError('')
     setIsLoadingVendorReviews(true)
     try {
+      if (showVendorMenu) {
+        setShowVendorMenu(false)
+      }
       const response = await fetch(
         `${API_BASE}/api/reviews/by-store-id?store_id=${encodeURIComponent(userProfile.store_id)}&limit=100`,
       )
@@ -393,6 +402,77 @@ function App({ userProfile }) {
       setError(loadError.message || 'Failed to load reviews.')
     } finally {
       setIsLoadingVendorReviews(false)
+    }
+  }
+
+  async function handleToggleVendorMenu() {
+    if (showVendorMenu) {
+      setShowVendorMenu(false)
+      setVendorMenuStatus('')
+      return
+    }
+    if (!userProfile?.store_id) {
+      setError('Unable to load menu: store id is missing.')
+      setShowVendorMenu(true)
+      setVendorMenuItems([])
+      setVendorMenuStatus('Unable to load menu: store id is missing.')
+      return
+    }
+    setError('')
+    setShowVendorMenu(true)
+    setVendorMenuStatus('Loading menu items...')
+    setIsLoadingVendorMenu(true)
+    try {
+      if (showVendorReviews) {
+        setShowVendorReviews(false)
+      }
+      if (showInsertReviewModal) {
+        setShowInsertReviewModal(false)
+      }
+      if (showInsertMenuModal) {
+        setShowInsertMenuModal(false)
+      }
+      const response = await fetch(
+        `${API_BASE}/api/menu/by-store-id?store_id=${encodeURIComponent(userProfile.store_id)}&limit=300`,
+      )
+      if (!response.ok) {
+        if (response.status === 404) {
+          const { data: supabaseRows, error: supabaseError } = await supabase
+            .from('menu_items')
+            .select('menu_id, item_name, category, price_rm, source, is_available')
+            .eq('store_id', userProfile.store_id)
+            .limit(300)
+
+          if (supabaseError) {
+            throw new Error(`Failed to load menu items (API + fallback). ${supabaseError.message || ''}`.trim())
+          }
+
+          const rows = Array.isArray(supabaseRows) ? supabaseRows : []
+          setVendorMenuItems(rows)
+          setVendorMenuStatus(rows.length === 0 ? 'No menu items found.' : '')
+          return
+        }
+
+        let detail = ''
+        try {
+          const errData = await response.json()
+          detail = errData?.detail ? String(errData.detail) : ''
+        } catch {
+          detail = ''
+        }
+        throw new Error(detail || 'Failed to load menu items. If this is a new endpoint, restart backend and try again.')
+      }
+      const data = await response.json()
+      const rows = Array.isArray(data.menu_items) ? data.menu_items : []
+      setVendorMenuItems(rows)
+      setVendorMenuStatus(rows.length === 0 ? 'No menu items found.' : '')
+    } catch (loadError) {
+      const msg = loadError.message || 'Failed to load menu items.'
+      setError(msg)
+      setVendorMenuItems([])
+      setVendorMenuStatus(msg)
+    } finally {
+      setIsLoadingVendorMenu(false)
     }
   }
 
@@ -459,6 +539,58 @@ function App({ userProfile }) {
       : sentimentEngine === 'keyword_fallback'
         ? 'meta-pill meta-pill--fallback'
         : 'meta-pill meta-pill--unknown'
+
+  const closeButtonStyle = {
+    width: '34px',
+    height: '34px',
+    minWidth: '34px',
+    minHeight: '34px',
+    padding: 0,
+    borderRadius: '999px',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '1.2rem',
+    fontWeight: 800,
+    lineHeight: 1,
+  }
+
+  const sortedVendorMenuItems = useMemo(() => {
+    const rows = [...vendorMenuItems]
+    if (vendorMenuSortBy === 'foodtype') {
+      rows.sort((left, right) => String(left?.category || '').localeCompare(String(right?.category || '')))
+      return rows
+    }
+
+    rows.sort((left, right) => {
+      const leftPrice = Number(left?.price_rm)
+      const rightPrice = Number(right?.price_rm)
+      const leftValid = Number.isFinite(leftPrice)
+      const rightValid = Number.isFinite(rightPrice)
+      if (!leftValid && !rightValid) return 0
+      if (!leftValid) return 1
+      if (!rightValid) return -1
+      return leftPrice - rightPrice
+    })
+    return rows
+  }, [vendorMenuItems, vendorMenuSortBy])
+
+  const filteredVendorReviews = useMemo(() => {
+    if (vendorReviewFilter === 'all') return vendorReviews
+    return vendorReviews.filter((review) => {
+      const sentiment = String(review?.sentiment || '').toLowerCase().trim()
+      if (vendorReviewFilter === 'positive') {
+        return sentiment === 'positive' || sentiment === 'pos'
+      }
+      if (vendorReviewFilter === 'negative') {
+        return sentiment === 'negative' || sentiment === 'neg'
+      }
+      if (vendorReviewFilter === 'neutral') {
+        return sentiment === 'neutral'
+      }
+      return true
+    })
+  }, [vendorReviews, vendorReviewFilter])
 
   function renderRatingStars(value) {
     const raw = Number(value)
@@ -600,10 +732,21 @@ function App({ userProfile }) {
                 <button
                   type="button"
                   className="primary secondary"
+                  onClick={handleToggleVendorMenu}
+                  disabled={isLoadingVendorMenu || isVendorRestaurantLoading || !vendorRestaurant}
+                >
+                  {isLoadingVendorMenu ? 'Loading...' : showVendorMenu ? 'Hide Menu' : 'View Menu'}
+                </button>
+                <button
+                  type="button"
+                  className="primary secondary"
                   onClick={() => {
                     setShowInsertReviewModal(!showInsertReviewModal);
                     if (!showInsertReviewModal && showVendorReviews) {
                        setShowVendorReviews(false);
+                    }
+                    if (!showInsertReviewModal && showVendorMenu) {
+                      setShowVendorMenu(false);
                     }
                     if (!showInsertReviewModal && showInsertMenuModal) {
                       setShowInsertMenuModal(false);
@@ -620,6 +763,9 @@ function App({ userProfile }) {
                     setShowInsertMenuModal(!showInsertMenuModal);
                     if (!showInsertMenuModal && showVendorReviews) {
                       setShowVendorReviews(false);
+                    }
+                    if (!showInsertMenuModal && showVendorMenu) {
+                      setShowVendorMenu(false);
                     }
                     if (!showInsertMenuModal && showInsertReviewModal) {
                       setShowInsertReviewModal(false);
@@ -640,7 +786,17 @@ function App({ userProfile }) {
                   border: '1px solid rgba(100, 200, 150, 0.4)',
                   boxShadow: '0 4px 12px rgba(0,0,0,0.05)'
                 }}>
-                  <h3 style={{ marginTop: 0, marginBottom: '5px', color: '#333' }}>Upload Reviews (CSV)</h3>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                    <h3 style={{ margin: 0, color: '#333' }}>Upload Reviews (CSV)</h3>
+                    <button
+                      type="button"
+                      className="primary secondary"
+                      style={closeButtonStyle}
+                      onClick={() => setShowInsertReviewModal(false)}
+                    >
+                      ×
+                    </button>
+                  </div>
                   <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '15px' }}>
                     CSV must include <strong>"review_text"</strong>, <strong>"overall_rating"</strong>, and <strong>"food_rating"</strong> headers. <strong>"rider_rating"</strong> is optional. Max 500 reviews.
                   </p>
@@ -701,9 +857,19 @@ function App({ userProfile }) {
                   border: '1px solid rgba(100, 200, 150, 0.4)',
                   boxShadow: '0 4px 12px rgba(0,0,0,0.05)'
                 }}>
-                  <h3 style={{ marginTop: 0, marginBottom: '5px', color: '#333' }}>Upload Menu (CSV)</h3>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                    <h3 style={{ margin: 0, color: '#333' }}>Upload Menu (CSV)</h3>
+                    <button
+                      type="button"
+                      className="primary secondary"
+                      style={closeButtonStyle}
+                      onClick={() => setShowInsertMenuModal(false)}
+                    >
+                      ×
+                    </button>
+                  </div>
                   <p style={{ fontSize: '0.85rem', color: '#666', marginBottom: '15px' }}>
-                    CSV must include <strong>"menu_id"</strong>, <strong>"store_id"</strong>, <strong>"restaurant_name"</strong>, <strong>"item_name"</strong>, and <strong>"category"</strong> headers.
+                    CSV must include <strong>"item_name"</strong>, <strong>"category"</strong>, and <strong>"price"</strong> headers. <strong>menu_id</strong> is auto-generated.
                   </p>
 
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -755,12 +921,57 @@ function App({ userProfile }) {
 
               {showVendorReviews ? (
                 <section className="vendor-reviews" aria-live="polite">
-                  <h3>Latest Reviews (Newest First)</h3>
-                  {vendorReviews.length === 0 ? (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                    <h3 style={{ margin: 0 }}>Latest Reviews (Newest First)</h3>
+                    <button
+                      type="button"
+                      className="primary secondary"
+                      style={closeButtonStyle}
+                      onClick={() => setShowVendorReviews(false)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <p>Total reviews: {vendorReviews.length} | Showing: {filteredVendorReviews.length}</p>
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '8px' }}>
+                    <button
+                      type="button"
+                      className="primary secondary"
+                      onClick={() => setVendorReviewFilter('all')}
+                      style={vendorReviewFilter === 'all' ? { fontWeight: '700', borderColor: '#ff8e53' } : undefined}
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      className="primary secondary"
+                      onClick={() => setVendorReviewFilter('positive')}
+                      style={vendorReviewFilter === 'positive' ? { fontWeight: '700', borderColor: '#ff8e53' } : undefined}
+                    >
+                      Positive
+                    </button>
+                    <button
+                      type="button"
+                      className="primary secondary"
+                      onClick={() => setVendorReviewFilter('negative')}
+                      style={vendorReviewFilter === 'negative' ? { fontWeight: '700', borderColor: '#ff8e53' } : undefined}
+                    >
+                      Negative
+                    </button>
+                    <button
+                      type="button"
+                      className="primary secondary"
+                      onClick={() => setVendorReviewFilter('neutral')}
+                      style={vendorReviewFilter === 'neutral' ? { fontWeight: '700', borderColor: '#ff8e53' } : undefined}
+                    >
+                      Neutral
+                    </button>
+                  </div>
+                  {filteredVendorReviews.length === 0 ? (
                     <p>No reviews found for this restaurant.</p>
                   ) : (
                     <ul className="vendor-review-list">
-                      {vendorReviews.map((review, index) => {
+                      {filteredVendorReviews.map((review, index) => {
                         const rating = renderRatingStars(review.overall_rating)
                         return (
                           <li key={`${review.updated_at || 'unknown'}-${index}`} className="vendor-review-item">
@@ -776,6 +987,52 @@ function App({ userProfile }) {
                           </li>
                         )
                       })}
+                    </ul>
+                  )}
+                </section>
+              ) : null}
+
+              {showVendorMenu ? (
+                <section className="vendor-reviews" aria-live="polite">
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' }}>
+                    <h3 style={{ margin: 0 }}>Current Menu Items</h3>
+                    <button
+                      type="button"
+                      className="primary secondary"
+                      style={closeButtonStyle}
+                      onClick={() => setShowVendorMenu(false)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                  <p>Total menu items: {vendorMenuItems.length}</p>
+                  {vendorMenuItems.length > 0 ? (
+                    <label style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                      <span style={{ fontWeight: 600 }}>Sort by:</span>
+                      <select value={vendorMenuSortBy} onChange={(event) => setVendorMenuSortBy(event.target.value)}>
+                        <option value="price">Price</option>
+                        <option value="foodtype">Food Type</option>
+                      </select>
+                    </label>
+                  ) : null}
+                  {vendorMenuStatus ? <p>{vendorMenuStatus}</p> : null}
+                  {vendorMenuItems.length === 0 ? (
+                    vendorMenuStatus ? null : <p>No menu items found for this restaurant.</p>
+                  ) : (
+                    <ul className="vendor-review-list">
+                      {sortedVendorMenuItems.map((item, index) => (
+                        <li key={item.menu_id || `${item.item_name || 'item'}-${index}`} className="vendor-review-item">
+                          <p>
+                            <strong>{item.item_name || 'Unnamed item'}</strong>
+                            {item.category ? ` (${item.category})` : ''}
+                          </p>
+                          <small>
+                            Price: {typeof item.price_rm === 'number' ? `RM ${item.price_rm.toFixed(2)}` : (item.price_rm ? `RM ${item.price_rm}` : 'N/A')} | 
+                            Available: {item.is_available === false ? 'No' : 'Yes'} | 
+                            Source: {item.source || 'N/A'}
+                          </small>
+                        </li>
+                      ))}
                     </ul>
                   )}
                 </section>

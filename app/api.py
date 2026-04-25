@@ -19,6 +19,7 @@ from .repository import (
     find_restaurant_by_store_id,
     find_vendor_restaurant_by_user_id,
     get_chat_history,
+    get_menu_items_by_store_id,
     get_metrics_for_store_ids,
     get_recent_reviews,
     get_reviews_by_keywords,
@@ -932,6 +933,18 @@ def get_reviews_by_store_id(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/menu/by-store-id")
+def get_menu_by_store_id(
+    store_id: str = Query(min_length=1),
+    limit: int = Query(default=200, ge=1, le=500),
+) -> Dict[str, List[Dict]]:
+    try:
+        rows = get_menu_items_by_store_id(store_id=store_id, limit=limit)
+        return {"menu_items": rows}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/sentiment/engine")
 def sentiment_engine() -> Dict[str, str]:
     return {"engine": get_sentiment_engine_status()}
@@ -1013,7 +1026,7 @@ def start_chat_conversation(payload: StartConversationRequest) -> StartConversat
 @app.post("/api/menu/upload")
 async def upload_menu(
     file: UploadFile = File(...),
-    store_id: Optional[str] = Form(None),
+    store_id: str = Form(...),
 ) -> Dict:
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are allowed.")
@@ -1022,7 +1035,10 @@ async def upload_menu(
         contents = await file.read()
         df = pd.read_csv(io.BytesIO(contents))
 
-        required_columns = ["menu_id", "store_id", "restaurant_name", "item_name", "category"]
+        if "price" not in df.columns and "price_rm" in df.columns:
+            df["price"] = df["price_rm"]
+
+        required_columns = ["item_name", "category", "price"]
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
             raise HTTPException(
@@ -1030,14 +1046,36 @@ async def upload_menu(
                 detail=f"CSV is missing required columns: {', '.join(missing_columns)}",
             )
 
-        # Default optional columns if not present in CSV
-        if "price_rm" not in df.columns:
-            df["price_rm"] = None
-        if "source" not in df.columns:
-            df["source"] = "manual_upload"
+        # Enforce mandatory form-level store_id from logged-in vendor.
+        if not str(store_id or "").strip():
+            raise HTTPException(status_code=400, detail="store_id is required")
+
+        # Validate required fields per row.
+        for col in ["item_name", "category", "price"]:
+            if df[col].isna().any():
+                raise HTTPException(status_code=400, detail=f"Column '{col}' has empty values")
+
+        df["item_name"] = df["item_name"].astype(str).str.strip()
+        df["category"] = df["category"].astype(str).str.strip()
+        if (df["item_name"] == "").any() or (df["category"] == "").any():
+            raise HTTPException(status_code=400, detail="Columns 'item_name' and 'category' cannot be blank")
+
+        df["price_rm"] = pd.to_numeric(df["price"], errors="coerce")
+        if df["price_rm"].isna().any():
+            raise HTTPException(status_code=400, detail="Column 'price' must contain valid numbers")
+
+        # Server-managed fields.
+        df["menu_id"] = [str(uuid4()) for _ in range(len(df))]
+        df["store_id"] = store_id
+        if "restaurant_name" not in df.columns:
+            df["restaurant_name"] = None
+        df["source"] = "Vendor Data"
+        df["is_available"] = True
 
         df = df.where(pd.notnull(df), None)
-        records_to_insert = df.to_dict(orient="records")
+        records_to_insert = df[
+            ["menu_id", "store_id", "restaurant_name", "item_name", "category", "price_rm", "source", "is_available"]
+        ].to_dict(orient="records")
         inserted_count = insert_bulk_menu_items(records_to_insert)
 
         return {"message": "Menu inserted successfully!", "inserted_count": inserted_count}
@@ -1472,38 +1510,80 @@ def _simple_sentiment_summary(reviews: List[str]) -> Dict[str, float]:
 class RestaurantCreate(BaseModel):
     name: str
     food_type: str
+    google_place_id: str
     google_formatted_address: str
-    google_lat: Optional[float] = 0.0
-    google_lng: Optional[float] = 0.0
+    google_lat: float
+    google_lng: float
+    google_website: Optional[str] = None
+    google_phone: Optional[str] = None
+    google_price_tier: Optional[str] = None
+    opening_hours: Optional[dict] = None  # raw object from Google
 
 @app.post("/api/restaurants/create")
 async def create_restaurant(restaurant: RestaurantCreate):
     try:
         new_store_id = str(uuid4())
 
+        # Parse opening hours into per-day columns
+        hours = restaurant.opening_hours
+        days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        day_hours = {d: None for d in days}
+
+        if hours and 'weekdayDescriptions' in hours:
+            for i, desc in enumerate(hours['weekdayDescriptions']):
+                if i < 7:
+                    day_hours[days[i]] = desc
+
         with engine.begin() as conn:
+            existing = conn.execute(
+                text("SELECT store_id FROM restaurants WHERE google_place_id = :place_id"),
+                {"place_id": restaurant.google_place_id}
+            ).fetchone()
+
+            if existing:
+                return {"status": "exists", "message": "Restaurant already exists", "store_id": existing[0]}
+
             conn.execute(
                 text("""
                     INSERT INTO restaurants 
-                        (store_id, name, food_type, google_formatted_address, google_lat, google_lng, avg_rating)
+                        (store_id, name, food_type, google_place_id,
+                         google_formatted_address, google_lat, google_lng, avg_rating,
+                         google_website, google_phone, google_price_tier,
+                         operating_hours_monday, operating_hours_tuesday,
+                         operating_hours_wednesday, operating_hours_thursday,
+                         operating_hours_friday, operating_hours_saturday,
+                         operating_hours_sunday, operating_hours_by_day_json)
                     VALUES 
-                        (:store_id, :name, :food_type, :google_formatted_address, :google_lat, :google_lng, :avg_rating)
+                        (:store_id, :name, :food_type, :google_place_id,
+                         :google_formatted_address, :google_lat, :google_lng, :avg_rating,
+                         :google_website, :google_phone, :google_price_tier,
+                         :monday, :tuesday, :wednesday, :thursday,
+                         :friday, :saturday, :sunday, :by_day_json)
                 """),
                 {
                     "store_id": new_store_id,
                     "name": restaurant.name,
                     "food_type": restaurant.food_type,
+                    "google_place_id": restaurant.google_place_id,
                     "google_formatted_address": restaurant.google_formatted_address,
                     "google_lat": restaurant.google_lat,
                     "google_lng": restaurant.google_lng,
                     "avg_rating": 0.0,
+                    "google_website": restaurant.google_website,
+                    "google_phone": restaurant.google_phone,
+                    "google_price_tier": restaurant.google_price_tier,
+                    "monday": day_hours['monday'],
+                    "tuesday": day_hours['tuesday'],
+                    "wednesday": day_hours['wednesday'],
+                    "thursday": day_hours['thursday'],
+                    "friday": day_hours['friday'],
+                    "saturday": day_hours['saturday'],
+                    "sunday": day_hours['sunday'],
+                    "by_day_json": str(hours) if hours else None,
                 }
             )
 
-        return {
-            "status": "success",
-            "message": "Restaurant created successfully",
-            "store_id": new_store_id,
-        }
+        return {"status": "success", "message": "Restaurant created successfully", "store_id": new_store_id}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
