@@ -3,7 +3,7 @@ import { onAuthStateChanged } from 'firebase/auth'
 import { auth } from './firebase'
 import { supabase } from './supabase'
 import { Login, logout } from './Login'
-import Registration from './components/Registration'
+import { Registration } from './components/Registration'
 import App from './App'
 import ChatPage from './ChatPage'
 
