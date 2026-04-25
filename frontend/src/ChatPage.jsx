@@ -274,14 +274,30 @@ function RestaurantCard({ restaurant, userProfile }) {
         )}
 
         {showMenu && menuItems.length > 0 && (
-          <ul style={{ listStyle: 'none', padding: 0, marginTop: '8px' }}>
-            {menuItems.map((mi, idx) => (
-              <li key={mi.menu_id || idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: idx ? '1px solid #f3f3f3' : 'none' }}>
-                <span style={{ fontWeight: 600 }}>{mi.item_name}</span>
-                <span style={{ color: '#444' }}>RM {Number(mi.price_rm || 0).toFixed(2)}</span>
-              </li>
-            ))}
-          </ul>
+          <div style={{ marginTop: '8px' }}>
+            {(() => {
+              const groups = (menuItems || []).reduce((acc, mi) => {
+                const cat = mi.category || 'Uncategorized'
+                if (!acc[cat]) acc[cat] = []
+                acc[cat].push(mi)
+                return acc
+              }, {})
+
+              return Object.keys(groups).map((cat) => (
+                <div key={cat} style={{ marginBottom: '10px' }}>
+                  <h4 style={{ margin: '6px 0', fontSize: '0.9rem', fontWeight: 700, color: '#444' }}>{cat}</h4>
+                  <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                    {groups[cat].map((mi, idx) => (
+                      <li key={mi.menu_id || idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: idx ? '1px solid #f3f3f3' : 'none' }}>
+                        <span style={{ fontWeight: 600 }}>{mi.item_name}</span>
+                        <span style={{ color: '#444' }}>RM {Number(mi.price_rm || 0).toFixed(2)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))
+            })()}
+          </div>
         )}
       </div>
     </div>
