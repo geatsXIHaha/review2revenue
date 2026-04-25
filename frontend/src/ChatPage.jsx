@@ -88,7 +88,7 @@ function RestaurantCard({ restaurant, userProfile }) {
   async function fetchMenu() {
     // Prefer embedded menu_items if provided by backend
     if (Array.isArray(restaurant?.menu_items) && restaurant.menu_items.length > 0) {
-      setMenuItems(restaurant.menu_items)
+      setMenuItems(sortMenu(restaurant.menu_items))
       setMenuError('')
       setShowMenu(true)
       return
@@ -110,7 +110,7 @@ function RestaurantCard({ restaurant, userProfile }) {
         throw new Error(msg)
       }
       const data = await response.json()
-      setMenuItems(Array.isArray(data.menu_items) ? data.menu_items : [])
+      setMenuItems(Array.isArray(data.menu_items) ? sortMenu(data.menu_items) : [])
       setShowMenu(true)
     } catch (err) {
       console.error('Menu fetch error:', err)
@@ -120,6 +120,24 @@ function RestaurantCard({ restaurant, userProfile }) {
       setIsLoadingMenu(false)
     }
   }
+  const sortMenu = (items) => {
+    return (items || []).slice().sort((a, b) => {
+      const ca = (a.category || '').toLowerCase();
+      const cb = (b.category || '').toLowerCase();
+      if (ca < cb) return -1;
+      if (ca > cb) return 1;
+      const pa = (a.price_rm === null || a.price_rm === undefined) ? Infinity : Number(a.price_rm);
+      const pb = (b.price_rm === null || b.price_rm === undefined) ? Infinity : Number(b.price_rm);
+      if (pa < pb) return -1;
+      if (pa > pb) return 1;
+      const ia = (a.item_name || '').toLowerCase();
+      const ib = (b.item_name || '').toLowerCase();
+      if (ia < ib) return -1;
+      if (ia > ib) return 1;
+      return 0;
+    })
+  }
+
   const {
     name, food_type, avg_rating, address, phone, website,
     distance_km, operating_hours_today, price_description,

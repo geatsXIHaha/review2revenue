@@ -764,7 +764,7 @@ def get_menu_items_by_store_id(store_id: str) -> list:
                     SELECT menu_id, store_id, restaurant_name, item_name, category, price_rm, source
                     FROM menu_items
                     WHERE store_id = :store_id
-                    ORDER BY COALESCE(category, ''), item_name
+                    ORDER BY COALESCE(category, ''), COALESCE(price_rm, 0) ASC, item_name
                 """), {"store_id": store_id}
             ).mappings().all()
         return [dict(r) for r in rows]
