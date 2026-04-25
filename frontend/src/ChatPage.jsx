@@ -78,18 +78,34 @@ function getPendingChatTransition() {
   }
 }
 
+// ── Normalise a raw menu item's category to a plain trimmed string ─────────────
+function normalizeCategory(item) {
+  if (!item) return ''
+  const raw =
+    (typeof item.category === 'string' && item.category) ||
+    (item.category && typeof item.category === 'object' && (item.category.name || item.category.title)) ||
+    item.category_name ||
+    item.section ||
+    ''
+  return String(raw).trim()
+}
 
-function sortMenu(menuItems) {
-  return [...menuItems].sort((a, b) => {
-    const categoryA = (a.category || "").toLowerCase();
-    const categoryB = (b.category || "").toLowerCase();
-    if (categoryA < categoryB) return -1;
-    if (categoryA > categoryB) return 1;
-
-    const priceA = parseFloat(a.price_rm) || 0;
-    const priceB = parseFloat(b.price_rm) || 0;
-    return priceA - priceB;
-  });
+// ── Sort menu items: by category alphabetically, then price asc, then name asc ─
+function sortMenuItems(items) {
+  return (items || []).slice().sort((a, b) => {
+    const ca = (a.category || '').toLowerCase()
+    const cb = (b.category || '').toLowerCase()
+    if (ca < cb) return -1
+    if (ca > cb) return 1
+    const pa = a.price_rm === null || a.price_rm === undefined ? Infinity : Number(a.price_rm)
+    const pb = b.price_rm === null || b.price_rm === undefined ? Infinity : Number(b.price_rm)
+    if (pa !== pb) return pa - pb
+    const ia = (a.item_name || '').toLowerCase()
+    const ib = (b.item_name || '').toLowerCase()
+    if (ia < ib) return -1
+    if (ia > ib) return 1
+    return 0
+  })
 }
 
 // ── Restaurant Card ────────────────────────────────────────────────────────────
@@ -98,25 +114,27 @@ function RestaurantCard({ restaurant, userProfile }) {
   const [menuItems, setMenuItems] = useState([])
   const [isLoadingMenu, setIsLoadingMenu] = useState(false)
   const [menuError, setMenuError] = useState('')
+  const [showReviews, setShowReviews] = useState(false)
+  const [reviews, setReviews] = useState([])
+  const [isLoadingReviews, setIsLoadingReviews] = useState(false)
+  const [reviewsError, setReviewsError] = useState('')
+
+  function renderRatingStars(value) {
+    const raw = Number(value)
+    if (!Number.isFinite(raw)) return '☆☆☆☆☆'
+    const clamped = Math.max(0, Math.min(5, raw))
+    const rounded = Math.round(clamped)
+    return '★'.repeat(rounded) + '☆'.repeat(5 - rounded)
+  }
 
   async function fetchMenu() {
     // Prefer embedded menu_items if provided by backend
     if (Array.isArray(restaurant?.menu_items) && restaurant.menu_items.length > 0) {
-      // Normalize category field to a plain string — support multiple backend shapes
-      const normalized = restaurant.menu_items.map((it) => {
-        let category = ''
-        if (it && it.category) {
-          if (typeof it.category === 'string') category = it.category
-          else if (it.category?.name) category = it.category.name
-          else if (it.category?.title) category = it.category.title
-        } else if (it.category_name) {
-          category = it.category_name
-        } else if (it.section) {
-          category = it.section
-        }
-        return { ...it, category: (category || '').toString().trim() }
-      })
-      setMenuItems(sortMenu(normalized))
+      const normalized = restaurant.menu_items.map((it) => ({
+        ...it,
+        category: normalizeCategory(it),
+      }))
+      setMenuItems(sortMenuItems(normalized))
       setMenuError('')
       setShowMenu(true)
       return
@@ -140,18 +158,19 @@ function RestaurantCard({ restaurant, userProfile }) {
       }
       const data = await response.json()
       if (Array.isArray(data.categories)) {
-        // flatten categories into items including category field
+        // flatten categories → items, stamping category onto each item
         const flat = []
         data.categories.forEach((cat) => {
-          const cname = cat.category || 'Uncategorized'
+          const cname = (cat.category || 'Uncategorized').toString().trim()
           ;(cat.items || []).forEach((it) => {
             flat.push({ ...it, category: cname })
           })
         })
-        setMenuItems(sortMenu(flat))
+        setMenuItems(sortMenuItems(flat))
       } else {
-        // fallback
-        setMenuItems(Array.isArray(data.menu_items) ? sortMenu(data.menu_items) : [])
+        setMenuItems(Array.isArray(data.menu_items) ? sortMenuItems(
+          data.menu_items.map((it) => ({ ...it, category: normalizeCategory(it) }))
+        ) : [])
       }
       setShowMenu(true)
     } catch (err) {
@@ -161,23 +180,6 @@ function RestaurantCard({ restaurant, userProfile }) {
     } finally {
       setIsLoadingMenu(false)
     }
-  }
-  const sortMenu = (items) => {
-    return (items || []).slice().sort((a, b) => {
-      const ca = (a.category || '').toLowerCase();
-      const cb = (b.category || '').toLowerCase();
-      if (ca < cb) return -1;
-      if (ca > cb) return 1;
-      const pa = (a.price_rm === null || a.price_rm === undefined) ? Infinity : Number(a.price_rm);
-      const pb = (b.price_rm === null || b.price_rm === undefined) ? Infinity : Number(b.price_rm);
-      if (pa < pb) return -1;
-      if (pa > pb) return 1;
-      const ia = (a.item_name || '').toLowerCase();
-      const ib = (b.item_name || '').toLowerCase();
-      if (ia < ib) return -1;
-      if (ia > ib) return 1;
-      return 0;
-    })
   }
 
   const {
@@ -299,39 +301,57 @@ function RestaurantCard({ restaurant, userProfile }) {
         </div>
       )}
 
-      {/* Menu button and menu list */}
-      <div style={{ marginTop: '10px' }}>
-        <button onClick={fetchMenu} disabled={isLoadingMenu} style={{
-          background: '#111827', color: '#fff', borderRadius: '8px', padding: '8px 12px', fontWeight: 700, border: 'none'
-        }}>
-          {isLoadingMenu ? 'Loading menu...' : (showMenu ? 'Refresh Menu' : 'View Menu')}
-        </button>
+      {/* Menu button, reviews button and content */}
+      <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button onClick={showMenu ? () => setShowMenu(false) : fetchMenu} disabled={isLoadingMenu} style={{
+            background: '#111827', color: '#fff', borderRadius: '8px', padding: '8px 12px', fontWeight: 700, border: 'none', cursor: 'pointer',
+          }}>
+            {isLoadingMenu ? 'Loading menu...' : (showMenu ? 'Hide Menu' : 'View Menu')}
+          </button>
+
+          <button onClick={() => { if (!showReviews) fetchReviews(); else setShowReviews(false) }} disabled={isLoadingReviews} style={{
+            background: '#0b74de', color: '#fff', borderRadius: '8px', padding: '8px 12px', fontWeight: 700, border: 'none', cursor: 'pointer',
+          }}>
+            {isLoadingReviews ? 'Loading reviews...' : (showReviews ? 'Hide Reviews' : 'View Reviews')}
+          </button>
+        </div>
 
         {menuError && (
-          <p style={{ marginTop: '8px', fontSize: '0.85rem', color: '#d32f2f' }}>{menuError}</p>
+          <p style={{ marginTop: '0px', fontSize: '0.85rem', color: '#d32f2f' }}>{menuError}</p>
+        )}
+
+        {reviewsError && (
+          <p style={{ marginTop: '0px', fontSize: '0.85rem', color: '#d32f2f' }}>{reviewsError}</p>
         )}
 
         {showMenu && !isLoadingMenu && menuItems.length === 0 && (
-          <p style={{ marginTop: '8px', fontSize: '0.85rem', color: '#666' }}>No menu items found.</p>
+          <p style={{ marginTop: '0px', fontSize: '0.85rem', color: '#666' }}>No menu items found.</p>
         )}
 
         {showMenu && menuItems.length > 0 && (
           <div style={{ marginTop: '8px' }}>
             {(() => {
-              const groups = (menuItems || []).reduce((acc, mi) => {
+              // Group by category
+              const groups = menuItems.reduce((acc, mi) => {
                 const raw = (mi.category || '').toString().trim()
-                const cat = raw.length > 0 ? (raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()) : 'Uncategorized'
+                const cat = raw.length > 0
+                  ? raw.charAt(0).toUpperCase() + raw.slice(1)
+                  : 'Uncategorized'
                 if (!acc[cat]) acc[cat] = []
                 acc[cat].push(mi)
                 return acc
               }, {})
 
-              return Object.keys(groups).map((cat) => (
+              return Object.keys(groups).sort().map((cat) => (
                 <div key={cat} style={{ marginBottom: '10px' }}>
                   <h4 style={{ margin: '6px 0', fontSize: '0.9rem', fontWeight: 700, color: '#444' }}>{cat}</h4>
                   <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
                     {groups[cat].map((mi, idx) => (
-                      <li key={mi.menu_id || idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: idx ? '1px solid #f3f3f3' : 'none' }}>
+                      <li key={mi.menu_id || idx} style={{
+                        display: 'flex', justifyContent: 'space-between',
+                        padding: '6px 0', borderTop: idx ? '1px solid #f3f3f3' : 'none',
+                      }}>
                         <span style={{ fontWeight: 600 }}>{mi.item_name}</span>
                         <span style={{ color: '#444' }}>RM {Number(mi.price_rm || 0).toFixed(2)}</span>
                       </li>
@@ -342,6 +362,29 @@ function RestaurantCard({ restaurant, userProfile }) {
             })()}
           </div>
         )}
+
+        {showReviews && (
+          <div style={{ marginTop: '8px', padding: '10px', background: '#fafafa', borderRadius: '8px' }}>
+            {isLoadingReviews ? (
+              <p style={{ margin: 0 }}>Loading reviews...</p>
+            ) : reviews.length === 0 ? (
+              <p style={{ margin: 0, color: '#666' }}>No reviews found.</p>
+            ) : (
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                {reviews.map((rev, idx) => (
+                  <li key={rev.id || idx} style={{ padding: '8px 0', borderTop: idx ? '1px solid #eee' : 'none' }}>
+                    <p style={{ margin: '0 0 6px 0' }}>{rev.review_text || rev.text || rev.message || ''}</p>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', color: '#666', fontSize: '0.85rem' }}>
+                      <div style={{ fontWeight: 700, color: '#f59e0b' }}>{renderRatingStars(rev.overall_rating || rev.rating || 0)}</div>
+                      <small>{rev.updated_at ? new Date(rev.updated_at).toLocaleString() : (rev.created_at ? new Date(rev.created_at).toLocaleString() : '')}</small>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
       </div>
     </div>
   )
@@ -544,12 +587,12 @@ function ChatPage({ userProfile }) {
         const data = await response.json()
         const persistedConversationId = data.conversation_id || pendingConversationId
         setConversationId(persistedConversationId)
-          optimisticConversationIdRef.current = persistedConversationId
-          upsertConversationPreview(pendingConversationId, persistedConversationId, pending.answer, data.updated_at)
+        optimisticConversationIdRef.current = persistedConversationId
+        upsertConversationPreview(pendingConversationId, persistedConversationId, pending.answer, data.updated_at)
         sessionStorage.removeItem('pendingChatTransition')
 
         const rows = await fetchConversations(role)
-          if (!cancelled) setConversationRows(rows)
+        if (!cancelled) setConversationRows(rows)
       } catch (transitionError) {
         if (!cancelled) setError(transitionError.message || 'Failed to initialize chat conversation.')
         transitionStartedRef.current = false
@@ -650,8 +693,6 @@ function ChatPage({ userProfile }) {
 
       const data = await response.json()
 
-      // Show ALL backend restaurant cards — no filtering needed
-      // System prompt ensures AI only mentions restaurants from context_items
       const assistantMessage = {
         id: `a-${Date.now()}`,
         role: 'assistant',
@@ -801,7 +842,5 @@ function ChatPage({ userProfile }) {
     </main>
   )
 }
-
-
 
 export default ChatPage
