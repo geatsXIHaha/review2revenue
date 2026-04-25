@@ -78,6 +78,20 @@ function getPendingChatTransition() {
   }
 }
 
+
+function sortMenu(menuItems) {
+  return [...menuItems].sort((a, b) => {
+    const categoryA = (a.category || "").toLowerCase();
+    const categoryB = (b.category || "").toLowerCase();
+    if (categoryA < categoryB) return -1;
+    if (categoryA > categoryB) return 1;
+
+    const priceA = parseFloat(a.price_rm) || 0;
+    const priceB = parseFloat(b.price_rm) || 0;
+    return priceA - priceB;
+  });
+}
+
 // ── Restaurant Card ────────────────────────────────────────────────────────────
 function RestaurantCard({ restaurant, userProfile }) {
   const [showMenu, setShowMenu] = useState(false)
@@ -88,7 +102,21 @@ function RestaurantCard({ restaurant, userProfile }) {
   async function fetchMenu() {
     // Prefer embedded menu_items if provided by backend
     if (Array.isArray(restaurant?.menu_items) && restaurant.menu_items.length > 0) {
-      setMenuItems(sortMenu(restaurant.menu_items))
+      // Normalize category field to a plain string — support multiple backend shapes
+      const normalized = restaurant.menu_items.map((it) => {
+        let category = ''
+        if (it && it.category) {
+          if (typeof it.category === 'string') category = it.category
+          else if (it.category?.name) category = it.category.name
+          else if (it.category?.title) category = it.category.title
+        } else if (it.category_name) {
+          category = it.category_name
+        } else if (it.section) {
+          category = it.section
+        }
+        return { ...it, category: (category || '').toString().trim() }
+      })
+      setMenuItems(sortMenu(normalized))
       setMenuError('')
       setShowMenu(true)
       return
@@ -773,5 +801,7 @@ function ChatPage({ userProfile }) {
     </main>
   )
 }
+
+
 
 export default ChatPage
