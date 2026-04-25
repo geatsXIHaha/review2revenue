@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRegistration } from '../hooks/useRegistration'
 import { createNewRestaurantAPI } from '../apiServices'
 import './Registration.css'
@@ -9,57 +9,141 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
 
   const [isAddingNew, setIsAddingNew] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
-  const [formData, setFormData] = useState({
-    name: "",
-    food_type: "",
-    google_formatted_address: "",
-  })
+  const [foodType, setFoodType] = useState("")
+  const [selectedPlace, setSelectedPlace] = useState(null)
+  const [placeName, setPlaceName] = useState("")
 
-  const handleBackClick = () => {
-    if (isAddingNew) {
-      setIsAddingNew(false)
-      return
+  const autocompleteContainerRef = useRef(null)
+  const autocompleteElementRef = useRef(null)
+
+  // ── 1. Load Google Maps script once on mount ──
+  useEffect(() => {
+    if (document.querySelector('script[src*="maps.googleapis"]')) return
+    if (window.google) return
+
+    const script = document.createElement('script')
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${import.meta.env.VITE_GOOGLE_PLACES_API_KEY}&libraries=places&v=beta&loading=async`
+    script.async = true
+    document.head.appendChild(script)
+  }, [])
+
+  // ── 2. Attach PlaceAutocompleteElement when "Add New" form opens ──
+  useEffect(() => {
+    if (!isAddingNew) return
+
+    const init = async () => {
+      if (!autocompleteContainerRef.current || !window.google) return
+
+      autocompleteContainerRef.current.innerHTML = ''
+
+      const { PlaceAutocompleteElement, Place } = await window.google.maps.importLibrary('places')
+
+      const placeAutocomplete = new PlaceAutocompleteElement({
+        types: ['establishment'],
+        includedRegionCodes: ['my'],
+      })
+
+      placeAutocomplete.style.width = '100%'
+      autocompleteContainerRef.current.appendChild(placeAutocomplete)
+      autocompleteElementRef.current = placeAutocomplete
+
+      const handleSelect = async (event) => {
+        try {
+          const prediction = event.mh
+          const placeId = prediction.placeId
+
+          const place = new Place({ id: placeId })
+
+          await place.fetchFields({
+            fields: [
+              'displayName',
+              'formattedAddress',
+              'location',
+              'id',
+              'websiteURI',
+              'nationalPhoneNumber',
+              'regularOpeningHours',
+              'priceLevel',
+            ]
+          })
+
+          const placeData = {
+            place_id: place.id,
+            name: place.displayName,
+            formatted_address: place.formattedAddress,
+            website: place.websiteURI ?? null,
+            phone: place.nationalPhoneNumber ?? null,
+            price_level: place.priceLevel ?? null,
+            opening_hours: place.regularOpeningHours ?? null,
+            geometry: {
+              location: {
+                lat: () => place.location.lat(),
+                lng: () => place.location.lng(),
+              }
+            }
+          }
+
+          setSelectedPlace(placeData)
+          setPlaceName(place.displayName)
+
+        } catch (err) {
+          console.error('error:', err)
+        }
+      }
+
+      placeAutocomplete.addEventListener('gmp-select', handleSelect)
     }
-    if (registration.step === 'role-confirmation') {
-      registration.goBackToRoleSelection()
-      return
+
+    if (window.google) {
+      init()
+    } else {
+      const script = document.querySelector('script[src*="maps.googleapis"]')
+      script?.addEventListener('load', init)
+      return () => script?.removeEventListener('load', init)
     }
-    setShowBackConfirm(true)
-  }
-
-  const handleConfirmBack = () => {
-    setShowBackConfirm(false)
-    registration.goBackToRoleSelection()
-  }
-
-  const handleCancelBack = () => {
-    setShowBackConfirm(false)
-  }
-
-  const handleRestaurantSearch = (e) => {
-    registration.searchRestaurants(e.target.value)
-  }
-
-  const handleCompleteRegistration = async () => {
-    const success = await registration.completeRegistration()
-    if (success) {
-      onRegistrationComplete()
-    }
-  }
+  }, [isAddingNew])
 
   const handleCreateSubmit = async (e) => {
     e.preventDefault()
+
+    if (!selectedPlace) {
+      alert("Please select a restaurant from the Google suggestions dropdown")
+      return
+    }
+    if (!foodType.trim()) {
+      alert("Please enter the food type")
+      return
+    }
+
     setIsCreating(true)
+
     try {
+      const formData = {
+        name: selectedPlace.name,
+        food_type: foodType,
+        google_place_id: selectedPlace.place_id,
+        google_formatted_address: selectedPlace.formatted_address,
+        google_lat: selectedPlace.geometry.location.lat(),
+        google_lng: selectedPlace.geometry.location.lng(),
+        google_website: selectedPlace.website,
+        google_phone: selectedPlace.phone,
+        google_price_tier: selectedPlace.price_level,
+        opening_hours: selectedPlace.opening_hours,
+      }
+
       const result = await createNewRestaurantAPI(formData)
-      if (result && result.store_id) {
-        registration.selectRestaurant({
-          store_id: result.store_id,
-          name: formData.name,
-        })
+
+      if (result?.status === "exists") {
+        alert("This restaurant already exists in our database.")
+        window.location.href = "/"
+        return
+      }
+
+      if (result?.store_id) {
+        registration.selectRestaurant({ store_id: result.store_id, name: selectedPlace.name })
         setIsAddingNew(false)
       } else {
-        alert("Failed to create restaurant in database.")
+        alert("Failed to create restaurant. Please try again.")
       }
     } catch (err) {
       console.error("Error submitting new restaurant:", err)
@@ -67,6 +151,19 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
     } finally {
       setIsCreating(false)
     }
+  }
+
+  const handleBackClick = () => {
+    if (isAddingNew) { setIsAddingNew(false); return }
+    if (registration.step === 'role-confirmation') { registration.goBackToRoleSelection(); return }
+    setShowBackConfirm(true)
+  }
+  const handleConfirmBack = () => { setShowBackConfirm(false); registration.goBackToRoleSelection() }
+  const handleCancelBack = () => setShowBackConfirm(false)
+  const handleRestaurantSearch = (e) => registration.searchRestaurants(e.target.value)
+  const handleCompleteRegistration = async () => {
+    const success = await registration.completeRegistration()
+    if (success) onRegistrationComplete()
   }
 
   return (
@@ -89,24 +186,18 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
               <h3 style={{ marginBottom: '1rem', color: '#333' }}>Confirm Going Back</h3>
               <p style={{ marginBottom: '1.5rem', color: '#666', lineHeight: '1.6' }}>
                 ⚠️ If you go back now, you'll be able to change your role.{' '}
-                <strong>However, once you confirm your role and complete registration, you will NOT be able to change it again.</strong>
+                <strong>Once you confirm your role and complete registration, you will NOT be able to change it again.</strong>
               </p>
               <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
                 <button
                   onClick={handleCancelBack}
-                  style={{
-                    padding: '10px 24px', background: '#f0f0f0', border: '1px solid #ddd',
-                    borderRadius: '6px', cursor: 'pointer', fontWeight: '500',
-                  }}
+                  style={{ padding: '10px 24px', background: '#f0f0f0', border: '1px solid #ddd', borderRadius: '6px', cursor: 'pointer', fontWeight: '500' }}
                 >
                   Stay
                 </button>
                 <button
                   onClick={handleConfirmBack}
-                  style={{
-                    padding: '10px 24px', background: '#FF6B6B', color: 'white',
-                    border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '500',
-                  }}
+                  style={{ padding: '10px 24px', background: '#FF6B6B', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: '500' }}
                 >
                   Go Back
                 </button>
@@ -175,10 +266,7 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
               <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
                 <button
                   onClick={handleBackClick}
-                  style={{
-                    padding: '12px 32px', background: '#f0f0f0', border: '1px solid #ddd',
-                    borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '1rem',
-                  }}
+                  style={{ padding: '12px 32px', background: '#f0f0f0', border: '1px solid #ddd', borderRadius: '6px', cursor: 'pointer', fontWeight: '600', fontSize: '1rem' }}
                 >
                   ← Choose Different Role
                 </button>
@@ -199,7 +287,7 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
           </div>
         )}
 
-        {/* Step 2: Vendor Restaurant Selection (Or Creation) */}
+        {/* Step 2: Vendor Restaurant Selection */}
         {registration.step === 'vendor-matching' && (
           <div className="registration-step">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
@@ -217,68 +305,68 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
               </button>
             </div>
 
-            {/* ADD NEW RESTAURANT FORM */}
             {isAddingNew ? (
               <form onSubmit={handleCreateSubmit} style={{ marginTop: '1rem' }}>
-                <p className="step-description">Register your business in our database</p>
+                <p className="step-description">
+                  Search your restaurant on Google and select it from the dropdown.
+                </p>
 
-                <div style={{ marginBottom: '1rem', textAlign: 'left' }}>
+                <div style={{ marginBottom: '1.25rem', textAlign: 'left' }}>
                   <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', fontSize: '0.9rem', color: '#555' }}>
-                    Restaurant Name
+                    Search Restaurant on Google
                   </label>
-                  <input
-                    required
-                    className="search-input"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  />
-                </div>
 
-                <div style={{ marginBottom: '1rem', textAlign: 'left' }}>
-                  <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', fontSize: '0.9rem', color: '#555' }}>
-                    Food Type (e.g., Italian, Cafe)
-                  </label>
-                  <input
-                    required
-                    className="search-input"
-                    value={formData.food_type}
-                    onChange={(e) => setFormData({ ...formData, food_type: e.target.value })}
-                  />
+                  <div ref={autocompleteContainerRef} style={{ width: '100%' }} />
+
+                  {selectedPlace && (
+                    <p style={{ marginTop: '0.4rem', fontSize: '0.82rem', color: '#2e7d32' }}>
+                      ✅ {selectedPlace.formatted_address}
+                    </p>
+                  )}
+                  {placeName.length >= 3 && !selectedPlace && (
+                    <p style={{ marginTop: '0.4rem', fontSize: '0.82rem', color: '#888' }}>
+                      👆 Select a restaurant from the dropdown above
+                    </p>
+                  )}
                 </div>
 
                 <div style={{ marginBottom: '1.5rem', textAlign: 'left' }}>
                   <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold', fontSize: '0.9rem', color: '#555' }}>
-                    Full Address
+                    Food Type <span style={{ fontWeight: 400, color: '#888' }}>(e.g. Italian, Café, Sushi)</span>
                   </label>
                   <input
                     required
                     className="search-input"
-                    value={formData.google_formatted_address}
-                    onChange={(e) => setFormData({ ...formData, google_formatted_address: e.target.value })}
+                    placeholder="Enter cuisine / food type…"
+                    value={foodType}
+                    onChange={(e) => setFoodType(e.target.value)}
+                    style={{ width: '100%' }}
                   />
                 </div>
 
                 <button
                   type="submit"
-                  disabled={isCreating}
+                  disabled={isCreating || !selectedPlace || !foodType.trim()}
                   className="continue-button"
-                  style={{ width: '100%', opacity: isCreating ? 0.7 : 1 }}
+                  style={{
+                    width: '100%',
+                    opacity: (isCreating || !selectedPlace || !foodType.trim()) ? 0.6 : 1,
+                    cursor: (isCreating || !selectedPlace || !foodType.trim()) ? 'not-allowed' : 'pointer',
+                  }}
                 >
-                  {isCreating ? '⏳ Processing...' : 'Save & Select'}
+                  {isCreating ? '⏳ Processing…' : 'Save & Select Restaurant'}
                 </button>
               </form>
 
             ) : (
               <>
-                {/* TWO OPTION CARDS */}
                 {!registration.matchedRestaurant && (
                   <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
 
                     {/* Search Existing */}
                     <div style={{
                       flex: 1, padding: '1.5rem', borderRadius: '12px', textAlign: 'center',
-                      border: '2px solid rgba(255,150,100,0.4)',
-                      background: 'rgba(255,200,100,0.08)',
+                      border: '2px solid rgba(255,150,100,0.4)', background: 'rgba(255,200,100,0.08)',
                     }}>
                       <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🔍</div>
                       <p style={{ fontWeight: '600', color: '#333', marginBottom: '0.4rem' }}>Search Restaurant</p>
@@ -295,19 +383,13 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
                         style={{ width: '100%' }}
                       />
                       {registration.isSearching && (
-                        <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#888' }}>
-                          🔍 Searching...
-                        </div>
+                        <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: '#888' }}>🔍 Searching...</div>
                       )}
                       {registration.restaurantSuggestions.length > 0 && (
                         <div className="suggestions-dropdown">
-                          {registration.restaurantSuggestions.map((restaurant) => (
-                            <button
-                              key={restaurant.store_id}
-                              className="suggestion-item"
-                              onClick={() => registration.selectRestaurant(restaurant)}
-                            >
-                              <span className="suggestion-name">{restaurant.name}</span>
+                          {registration.restaurantSuggestions.map((r) => (
+                            <button key={r.store_id} className="suggestion-item" onClick={() => registration.selectRestaurant(r)}>
+                              <span className="suggestion-name">{r.name}</span>
                             </button>
                           ))}
                         </div>
@@ -335,8 +417,7 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
                     {/* Add New */}
                     <div style={{
                       flex: 1, padding: '1.5rem', borderRadius: '12px', textAlign: 'center',
-                      border: '2px dashed rgba(255,107,107,0.4)',
-                      background: 'rgba(255,107,107,0.05)',
+                      border: '2px dashed rgba(255,107,107,0.4)', background: 'rgba(255,107,107,0.05)',
                     }}>
                       <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🏪</div>
                       <p style={{ fontWeight: '600', color: '#333', marginBottom: '0.4rem' }}>Add New Restaurant</p>
@@ -349,8 +430,7 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
                           padding: '10px 24px',
                           background: 'linear-gradient(135deg, #FF6B6B 0%, #FF8E53 100%)',
                           color: 'white', border: 'none', borderRadius: '8px',
-                          cursor: 'pointer', fontWeight: '600', fontSize: '0.95rem',
-                          width: '100%',
+                          cursor: 'pointer', fontWeight: '600', fontSize: '0.95rem', width: '100%',
                         }}
                       >
                         + Add New Restaurant
@@ -372,10 +452,7 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
                       </p>
                       <button
                         onClick={() => registration.selectRestaurant(null)}
-                        style={{
-                          fontSize: '0.85rem', color: '#FF6B6B', background: 'none',
-                          border: 'none', cursor: 'pointer', textDecoration: 'underline',
-                        }}
+                        style={{ fontSize: '0.85rem', color: '#FF6B6B', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}
                       >
                         ✕ Change restaurant
                       </button>
@@ -394,7 +471,7 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
           </div>
         )}
 
-        {/* Step 3: Registration Complete - Diner */}
+        {/* Step 3: Complete - Diner */}
         {registration.step === 'complete' && registration.role === 'diner' && (
           <div className="registration-step">
             <div className="complete-message">
@@ -405,13 +482,11 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
                 You're all set as a <strong>Diner</strong>. Discover amazing restaurants now!
               </p>
             </div>
-            <button className="continue-button" onClick={handleCompleteRegistration}>
-              Enter App
-            </button>
+            <button className="continue-button" onClick={handleCompleteRegistration}>Enter App</button>
           </div>
         )}
 
-        {/* Step 3: Registration Complete - Vendor */}
+        {/* Step 3: Complete - Vendor */}
         {registration.step === 'complete' && registration.role === 'vendor' && (
           <div className="registration-step">
             <div className="complete-message">
@@ -423,9 +498,7 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
               </p>
               <p>Access your restaurant insights and analytics.</p>
             </div>
-            <button className="continue-button" onClick={handleCompleteRegistration}>
-              Enter Dashboard
-            </button>
+            <button className="continue-button" onClick={handleCompleteRegistration}>Enter Dashboard</button>
           </div>
         )}
       </div>

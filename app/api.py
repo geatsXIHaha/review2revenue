@@ -1439,38 +1439,80 @@ def _simple_sentiment_summary(reviews: List[str]) -> Dict[str, float]:
 class RestaurantCreate(BaseModel):
     name: str
     food_type: str
+    google_place_id: str
     google_formatted_address: str
-    google_lat: Optional[float] = 0.0
-    google_lng: Optional[float] = 0.0
+    google_lat: float
+    google_lng: float
+    google_website: Optional[str] = None
+    google_phone: Optional[str] = None
+    google_price_tier: Optional[str] = None
+    opening_hours: Optional[dict] = None  # raw object from Google
 
 @app.post("/api/restaurants/create")
 async def create_restaurant(restaurant: RestaurantCreate):
     try:
         new_store_id = str(uuid4())
 
+        # Parse opening hours into per-day columns
+        hours = restaurant.opening_hours
+        days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        day_hours = {d: None for d in days}
+
+        if hours and 'weekdayDescriptions' in hours:
+            for i, desc in enumerate(hours['weekdayDescriptions']):
+                if i < 7:
+                    day_hours[days[i]] = desc
+
         with engine.begin() as conn:
+            existing = conn.execute(
+                text("SELECT store_id FROM restaurants WHERE google_place_id = :place_id"),
+                {"place_id": restaurant.google_place_id}
+            ).fetchone()
+
+            if existing:
+                return {"status": "exists", "message": "Restaurant already exists", "store_id": existing[0]}
+
             conn.execute(
                 text("""
                     INSERT INTO restaurants 
-                        (store_id, name, food_type, google_formatted_address, google_lat, google_lng, avg_rating)
+                        (store_id, name, food_type, google_place_id,
+                         google_formatted_address, google_lat, google_lng, avg_rating,
+                         google_website, google_phone, google_price_tier,
+                         operating_hours_monday, operating_hours_tuesday,
+                         operating_hours_wednesday, operating_hours_thursday,
+                         operating_hours_friday, operating_hours_saturday,
+                         operating_hours_sunday, operating_hours_by_day_json)
                     VALUES 
-                        (:store_id, :name, :food_type, :google_formatted_address, :google_lat, :google_lng, :avg_rating)
+                        (:store_id, :name, :food_type, :google_place_id,
+                         :google_formatted_address, :google_lat, :google_lng, :avg_rating,
+                         :google_website, :google_phone, :google_price_tier,
+                         :monday, :tuesday, :wednesday, :thursday,
+                         :friday, :saturday, :sunday, :by_day_json)
                 """),
                 {
                     "store_id": new_store_id,
                     "name": restaurant.name,
                     "food_type": restaurant.food_type,
+                    "google_place_id": restaurant.google_place_id,
                     "google_formatted_address": restaurant.google_formatted_address,
                     "google_lat": restaurant.google_lat,
                     "google_lng": restaurant.google_lng,
                     "avg_rating": 0.0,
+                    "google_website": restaurant.google_website,
+                    "google_phone": restaurant.google_phone,
+                    "google_price_tier": restaurant.google_price_tier,
+                    "monday": day_hours['monday'],
+                    "tuesday": day_hours['tuesday'],
+                    "wednesday": day_hours['wednesday'],
+                    "thursday": day_hours['thursday'],
+                    "friday": day_hours['friday'],
+                    "saturday": day_hours['saturday'],
+                    "sunday": day_hours['sunday'],
+                    "by_day_json": str(hours) if hours else None,
                 }
             )
 
-        return {
-            "status": "success",
-            "message": "Restaurant created successfully",
-            "store_id": new_store_id,
-        }
+        return {"status": "success", "message": "Restaurant created successfully", "store_id": new_store_id}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
