@@ -354,6 +354,7 @@ function App({ userProfile }) {
         role,
         question: lastSubmittedPrompt,
         answer: result,
+        restaurants: recommendedRestaurants,
       }
       sessionStorage.setItem('pendingChatTransition', JSON.stringify(transitionPayload))
       navigateTo('/chat')
@@ -1071,6 +1072,16 @@ function App({ userProfile }) {
               <div className="ai-message">
                 <ReactMarkdown>{result}</ReactMarkdown>
               </div>
+              {recommendedRestaurants.length > 0 ? (
+                <div style={{ marginTop: '1rem' }}>
+                  <p style={{ margin: '0 0 0.6rem 0', fontSize: '0.85rem', fontWeight: 700, color: '#888', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                    📌 Restaurant Details
+                  </p>
+                  {recommendedRestaurants.map((restaurant, index) => (
+                    <RestaurantCard key={restaurant.name || index} restaurant={restaurant} />
+                  ))}
+                </div>
+              ) : null}
               <button
                 type="button"
                 className="primary secondary"
@@ -1097,8 +1108,8 @@ function RestaurantCard({ restaurant }) {
   } = restaurant
 
   const googleMapsUrl = address
-    ? `https://www.google.com/maps/search/?api=1&query=$${encodeURIComponent(address)}`
-    : lat && lng ? `https://www.google.com/maps?q=$${lat},${lng}` : null
+    ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`
+    : lat && lng ? `https://www.google.com/maps?q=${lat},${lng}` : null
 
   const wazeUrl = lat && lng
     ? `https://waze.com/ul?ll=${lat},${lng}&navigate=yes`

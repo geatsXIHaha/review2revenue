@@ -374,6 +374,7 @@ def start_conversation_with_initial_messages(
     question: str,
     answer: str,
     restaurant_name: Optional[str] = None,
+    restaurants: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     _ensure_chat_messages_table()
     with engine.begin() as conn:
@@ -422,13 +423,14 @@ def start_conversation_with_initial_messages(
                 text(
                     """
                     INSERT INTO chat_messages (conversation_id, role, sender, message, restaurant_name, restaurants_json)
-                    VALUES (:conversation_id, 'assistant', 'ai', :message, :restaurant_name, NULL)
+                    VALUES (:conversation_id, 'assistant', 'ai', :message, :restaurant_name, CAST(:restaurants_json AS JSONB))
                     """
                 ),
                 {
                     "conversation_id": conversation_id,
                     "message": answer,
                     "restaurant_name": restaurant_name,
+                    "restaurants_json": json.dumps(restaurants, default=_json_default) if restaurants else None,
                 },
             )
         conn.execute(
@@ -440,6 +442,37 @@ def start_conversation_with_initial_messages(
                 """
             ),
             {"conversation_id": conversation_id},
+        )
+
+
+def update_assistant_message_restaurants(conversation_id: str, restaurants: Optional[List[Dict[str, Any]]]) -> None:
+    if not conversation_id or not restaurants:
+        return
+
+    _ensure_chat_messages_table()
+    query = text(
+        """
+        WITH target AS (
+            SELECT id
+            FROM chat_messages
+            WHERE conversation_id = :conversation_id
+              AND role = 'assistant'
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+        )
+        UPDATE chat_messages cm
+        SET restaurants_json = CAST(:restaurants_json AS JSONB)
+        FROM target
+        WHERE cm.id = target.id
+        """
+    )
+    with engine.begin() as conn:
+        conn.execute(
+            query,
+            {
+                "conversation_id": conversation_id,
+                "restaurants_json": json.dumps(restaurants, default=_json_default),
+            },
         )
 
 

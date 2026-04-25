@@ -44,6 +44,7 @@ class StartConversationRequest(BaseModel):
     role: Role
     question: str = Field(min_length=1, max_length=2000)
     answer: str = Field(min_length=1, max_length=12000)
+    restaurants: Optional[List[Any]] = None
 
 
 class StartConversationResponse(BaseModel):

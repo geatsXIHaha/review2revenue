@@ -132,14 +132,49 @@ class ZAIClient:
     @staticmethod
     def _fallback_response(user_payload: Dict[str, Any]) -> str:
         role = user_payload.get("role", "diner")
-        if role == "vendor":
+        candidates = user_payload.get("top_candidates") or []
+
+        if not candidates:
+            if role == "vendor":
+                return (
+                    "I couldn't generate a model-based answer, but the database still supports your analysis. "
+                    "Try refining the question around ratings, review themes, menu items, or operating hours."
+                )
             return (
-                "Fallback mode: I could not reach Groq, Gemini, or Z.AI. Based on available metrics, "
-                "prioritize reducing negative review themes first, preserve strengths in positive "
-                "themes, and monitor weekly sentiment changes to validate improvement impact."
+                "I couldn't generate a model-based answer, but the database still supports restaurant matching. "
+                "Try adjusting your request by cuisine, price, distance, or opening hours."
             )
-        return (
-            "Fallback mode: I could not reach Groq, Gemini, or Z.AI. Based on available ratings and sentiment, "
-            "pick options with higher average rating and lower negative_ratio, then compare trade-offs "
-            "using location and budget preference."
+
+        intro = (
+            "Here are the strongest matches from the database based on your request:" 
+            if role == "diner"
+            else "Here are the strongest restaurants to focus on based on your request:"
         )
+        lines = [intro]
+        for index, restaurant in enumerate(candidates[:3], start=1):
+            name = restaurant.get("name") or "Unnamed restaurant"
+            food_type = restaurant.get("food_type") or restaurant.get("category")
+            rating = restaurant.get("avg_rating")
+            hours = restaurant.get("operating_hours_today")
+            address = restaurant.get("address")
+            distance = restaurant.get("distance_km")
+            price = restaurant.get("price_description") or restaurant.get("price_tier")
+            parts = [f"{index}. {name}"]
+            details = []
+            if food_type:
+                details.append(str(food_type))
+            if rating is not None:
+                details.append(f"{rating} / 5")
+            if price:
+                details.append(str(price))
+            if distance is not None:
+                details.append(f"{distance} km away")
+            if hours:
+                details.append(str(hours))
+            if address:
+                details.append(str(address))
+            if details:
+                parts.append(" - ".join(details))
+            lines.append("\n".join(parts))
+
+        return "\n\n".join(lines)

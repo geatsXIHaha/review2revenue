@@ -1,263 +1,94 @@
-# Registration Workflow Implementation Guide
+# Registration Guide
 
-## Overview
+This guide explains the registration flow in simple terms.
 
-This document describes the complete React/Vite registration workflow integrating **Firebase Authentication** and **Supabase PostgreSQL** with **permanent role selection** and **vendor restaurant matching**.
+## What happens during registration
 
-### Key Features (April 2026 Update)
+1. The user signs in with Google
+2. The app checks whether a profile already exists in Supabase
+3. If no profile exists, the registration screen opens
+4. The user chooses a role: Diner or Vendor
+5. The user confirms the role
+6. Vendors search and select their restaurant
+7. The profile is saved
+8. The app opens with the correct view
 
-✅ **Permanent Role Selection**
-- Users select role (Diner or Vendor) and CANNOT change it after confirmation
-- Role confirmation screen displays: "Once you confirm this role, you **CANNOT change it** in the future"
-- Back button on confirmation allows user to reconsider before committing
+## Important rules
 
-✅ **Vendor-Specific Restaurant Matching**
-- Vendors search by restaurant name during registration
-- Min 2 characters required before search (500ms debounce to reduce DB load)
-- Shows dropdown suggestions matching restaurant name
-- After selection, restaurant name cannot be changed
-- Backend stores `store_id` in user profile for future identification
+- The role is permanent after confirmation
+- Diner users can search restaurants and ask recommendation questions
+- Vendor users are locked to one restaurant using `store_id`
+- Vendors cannot switch to another restaurant later
 
-✅ **Separate Views After Registration**
-- Diner view: Restaurant search + recommendations
-- Vendor view: Read-only restaurant display (name + store_id), business insights only
-- No role-switching UI elements
+## Registration steps
 
-### Architecture Diagram
+### Step 1: Choose a role
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     ProtectedApp (Main Flow)                │
-└──────────────────┬──────────────────────────────────────────┘
-                   │
-        ┌──────────┴─────────────┐
-        │                        │
-    Not Logged In          Logged In
-        │                        │
-        ▼                        ▼
-    ┌─────────┐          ┌──────────────────┐
-    │  Login  │          │  Check DB for    │
-    │ (Google)│          │  User Profile    │
-    └─────────┘          └────────┬─────────┘
-                                  │
-                    ┌─────────────┴──────────────┐
-                    │                           │
-              Found in DB              Not Found (Registration)
-                    │                           │
-                    ▼                           ▼
-              ┌─────────┐           ┌───────────────────┐
-              │   App   │           │  Registration     │
-              └─────────┘           ├───────────────────┤
-                                    │ 1. Role Selection │
-                                    │    (Diner/Vendor) │
-                                    └────────┬──────────┘
-                                             │
-                                    ┌────────┴──────────┐
-                                    │                   │
-                                 Diner              Vendor
-                                    │                   │
-                                    ▼                   ▼
-                            ┌─────────────┐     ┌──────────────────┐
-                            │ Save to DB  │     │ 2. Search & Match│
-                            │  (upsert)   │     │    Restaurant    │
-                            └──────┬──────┘     └────────┬─────────┘
-                                   │                     │
-                                   │            ┌────────┴──────────┐
-                                   │            │                   │
-                                   │       Found             Not Found
-                                   │            │                   │
-                                   │            ▼                   ▼
-                                   │     ┌─────────────┐    ┌──────────────┐
-                                   │     │ Save to DB  │    │ Error Alert  │
-                                   │     │  (upsert)   │    │ Contact Team │
-                                   │     └──────┬──────┘    └──────────────┘
-                                   │            │
-                                   └────────────┼──────────┐
-                                                │          │
-                                                ▼          ▼
-                                            ┌──────────────────┐
-                                            │  Profile Summary │
-                                            │ & Continue to App│
-                                            └──────────────────┘
-                                                    │
-                                                    ▼
-                                               ┌─────────┐
-                                               │   App   │
-                                               └─────────┘
+- Click Diner or Vendor
+- The next screen asks you to confirm the choice
+- The warning message tells you that the role cannot be changed later
+
+### Step 2: Confirm the role
+
+- Review the selected role
+- If it is wrong, go back and choose again
+- If it is correct, continue
+
+### Step 3: Vendor restaurant search
+
+- Only vendors see this step
+- Type part of the restaurant name
+- The app searches the restaurant database
+- Pick the correct restaurant from the list
+
+### Step 4: Complete registration
+
+- The profile is saved in Supabase
+- The app refreshes the user profile right away
+- The user is sent to the main app
+
+## Data stored in Supabase
+
+The profile usually contains:
+
+- Firebase user id
+- email
+- display name
+- permanent role
+- vendor `store_id` if the user is a vendor
+
+## Common problems
+
+- If the restaurant search does not show results, try a shorter name
+- If the page says the profile is missing, complete registration again
+- If the vendor restaurant looks wrong, check the selected `store_id`
+- If login works but the app stays on registration, refresh the page once after saving
+
+## Simple architecture
+
+```text
+Login
+  -> Check Supabase profile
+    -> Profile exists: open app
+    -> Profile missing: open registration
+      -> Choose role
+      -> Confirm role
+      -> Vendor only: search restaurant
+      -> Save profile
+      -> Open app
 ```
 
----
+## Files involved
 
-## Database Schema
+- `frontend/src/ProtectedApp.jsx`
+- `frontend/src/components/Registration.jsx`
+- `frontend/src/hooks/useRegistration.js`
+- `app/api.py`
+- `app/repository.py`
 
-### Users Table
+## Summary
 
-```sql
-CREATE TABLE public.users (
-  id TEXT PRIMARY KEY,                    -- Firebase UID
-  user_name TEXT NOT NULL,                -- Display name
-  email TEXT NOT NULL UNIQUE,             -- Email address
-  role user_role NOT NULL,                -- ENUM: 'diner' | 'vendor'
-  store_id TEXT REFERENCES public.restaurants(store_id),  -- FK for vendors
-  created_at TIMESTAMP DEFAULT NOW(),
-  updated_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-**Constraints:**
-- `id`: Firebase UID (matches Firebase authentication)
-- `email`: Validated email format, globally unique
-- `role`: ENUM restricted to `'diner'` or `'vendor'`
-- `store_id`: Only populated for vendors; FK constraint ensures referential integrity
-- Check constraint: Vendors must have `store_id`, diners must have NULL `store_id`
-
----
-
-## Component Architecture
-
-### 1. **ProtectedApp.jsx** (Main Container)
-
-**Responsibilities:**
-- Manages Firebase authentication state
-- Checks if user exists in Supabase
-- Routes between Login → Registration → App
-
-**Key State:**
-```javascript
-const [user, setUser] = useState(null);                    // Firebase user
-const [userProfile, setUserProfile] = useState(null);      // Supabase profile
-const [registrationNeeded, setRegistrationNeeded] = useState(false);
-```
-
-**Flow:**
-1. `onAuthStateChanged` listener detects login
-2. Query Supabase: `SELECT * FROM users WHERE id = user.uid`
-3. If user exists: Show App
-4. If user doesn't exist: Show Registration component
-
----
-
-### 2. **Registration.jsx** (UI Component)
-
-**Props:**
-```javascript
-{
-  firebaseUser: {              // From Firebase auth
-    uid: string,
-    email: string,
-    displayName: string
-  },
-  onRegistrationComplete: () => void  // Callback when done
-}
-```
-
-**Steps:**
-
-#### Step 1: Role Selection
-- User clicks "Diner" or "Vendor" button
-- Updates hook state immediately
-- Diners skip to final step
-- Vendors proceed to Step 2
-
-#### Step 2: Restaurant Search (Vendor Only)
-- Input field with 300ms debounce
-- Queries: `SELECT store_id, name FROM restaurants WHERE name ILIKE %search%`
-- Case-insensitive matching (ILIKE operator)
-- Shows suggestions dropdown
-- User selects restaurant
-- Shows confirmation with restaurant name and ID
-
-#### Step 3: Profile Summary
-- Displays selected role
-- For vendors: Shows selected restaurant
-- User confirms and saves to database
-
----
-
-### 3. **useRegistration Hook** (Business Logic)
-
-**Custom hook that manages:**
-- Role selection state
-- Restaurant search and matching
-- Database persistence (upsert)
-- Error handling (FK constraints, auth errors)
-
-**Key Methods:**
-
-```javascript
-const {
-  // State
-  step,                          // 'role-selection' | 'vendor-matching' | 'complete'
-  role,                          // 'diner' | 'vendor' | ''
-  restaurantName,               // User input
-  matchedRestaurant,            // Selected restaurant object
-  restaurantSuggestions,        // Search results
-  isLoading,                    // Async operation state
-  error,                        // Error message
-  isComplete,                   // Registration done?
-  
-  // Handlers
-  selectRole(role),                           // Select diner or vendor
-  searchRestaurants(searchTerm),              // Debounced search
-  selectRestaurant(restaurant),               // Choose from suggestions
-  completeRegistration(),                    // Persist to DB
-  reset(),                                   // Reset flow
-  clearError()                               // Clear error message
-} = useRegistration(firebaseUser);
-```
-
----
-
-## API Integration
-
-### Supabase Queries
-
-#### 1. Check if User Exists
-```javascript
-const { data, error } = await supabase
-  .from('users')
-  .select('*')
-  .eq('id', currentUser.uid)
-  .single();
-```
-
-#### 2. Search Restaurants (Case-Insensitive)
-```javascript
-const { data, error } = await supabase
-  .from('restaurants')
-  .select('store_id, name')
-  .ilike('name', `%${searchTerm}%`)
-  .limit(10);
-```
-
-#### 3. Save User Profile (Upsert)
-```javascript
-const { data, error } = await supabase
-  .from('users')
-  .upsert([userData], { onConflict: 'id' })
-  .select();
-```
-
-**Why Upsert?**
-- Handles both new registrations and profile updates
-- Prevents duplicate key errors
-- Atomic operation (all or nothing)
-
----
-
-## Error Handling
-
-### 1. Firebase Auth Errors
-- Caught in Login component
-- Displayed to user
-- Common: Account doesn't exist, popup blocked, network error
-
-### 2. Supabase Database Errors
-- Foreign key constraint violation: "Restaurant not found"
-- Network errors: "Failed to search restaurants"
-- Upsert failures: "Failed to save user profile"
-
-### 3. Validation Errors
+Registration is designed to be one-time setup. After that, the app always opens with the saved role and restaurant assignment.
 - Required fields missing
 - Invalid role selection
 - Vendor without restaurant selection

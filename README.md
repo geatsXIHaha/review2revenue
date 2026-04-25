@@ -1,248 +1,75 @@
 # Review2Revenue
 
-Review2Revenue is an AI-powered restaurant decision system with two permanent roles:
-- **Diner**: Search restaurants, ask for recommendations with justification
-- **Vendor**: Access only their assigned restaurant, ask for analysis and improvements
+Review2Revenue is a restaurant recommendation and review analysis app.
 
-Tech stack:
-- Frontend: React + Vite + Firebase Authentication + Supabase Auth
-- Backend API: FastAPI (Python)
-- Database: PostgreSQL (Supabase)
-- AI layer: Groq (primary) + Gemini/Z.AI fallback
-- Authentication: Firebase (Google Sign-In) + Supabase (User Profiles)
-- UI Theme: Glassmorphism with animated food elements
-- Legacy dashboard: Streamlit (still available)
+It has two fixed roles:
 
-## 🎨 Latest Updates (April 2026)
+- Diner: asks for restaurant recommendations
+- Vendor: sees only their own restaurant and gets business analysis
 
-✅ **Role-Based Access Control with Permanent Selection**
-- Users select role (Diner or Vendor) during registration
-- Role selection is **permanent** - cannot be changed after confirmation
-- Role warning clearly states: "Once you confirm this role, you **CANNOT change it** in the future"
-- Role badge displayed in header (🍴 Diner or 🏪 Vendor)
+## What the app includes
 
-✅ **Completely Separate Diner and Vendor Views**
-- **Diner View**: Restaurant search input (optional), can explore any restaurant, ask recommendations
-- **Vendor View**: Read-only restaurant display (name + store_id), cannot search, ask for business insights
-- No role-switching UI elements - role is locked after registration
+- Firebase Google sign-in for login
+- Supabase user profiles
+- FastAPI backend with PostgreSQL data
+- React + Vite frontend
+- Restaurant cards, menu details, and review summaries
+- Chat page that keeps conversation history
 
-✅ **Vendor Restaurant Locking**
-- Vendors registered with a specific `store_id` see only their restaurant
-- Restaurant name and store_id fetched directly from database via `/api/restaurants/by-store-id` endpoint
-- Vendors cannot access or search other restaurants
-- External reviews optional - system focuses on vendor's own restaurant data
+## Current behavior
 
-✅ **Backend Store_ID Integration**
-- New API endpoint: `GET /api/restaurants/by-store-id?store_id={id}`
-- Backend receives and processes `store_id` parameter from vendor requests
-- Repository function `find_restaurant_by_store_id()` queries database directly
-- Vendor payloads include `store_id` for backend identification
+- Role is chosen during registration and cannot be changed later
+- Vendors are locked to one restaurant via `store_id`
+- Home page shows the AI answer and restaurant cards
+- Chat page shows the same recommendation cards and saves chat history
+- If no external LLM key is available, the backend returns a database-based summary instead of a live-model response
 
-✅ **Firebase Google Sign-In Authentication**
-- Users must authenticate with Google before accessing the app
-- Secure token-based session management
-- Profile information display in header
-- Automatic role fetch from Supabase after registration
+## Project layout
 
-✅ **Beautiful Foodie Theme**
-- Glassmorphic cards with blur effects
-- Animated floating food emojis (🍕🍣🍜🧁🍩 etc)
-- Sparkle animations throughout
-- Wavy ribbon animation at bottom
-- Gradient text for titles
-- Smooth color transitions
-
-✅ **Responsive & Accessible UI**
-- Mobile-optimized with `clamp()` sizing
-- All text fully visible and readable
-- Touch-friendly button sizes (min 44px)
-- Flexible layouts that adapt to screen size
-- Proper spacing and padding throughout
-
-✅ **Environment Configuration**
-- Comprehensive `.env.example` with all API setup instructions
-- Frontend `.env.local` for Firebase config (VITE_ prefixed)
-- Security best practices documented
-- API key sourcing guides for each service
-
-## Project Structure
-
-```
+```text
 review2revenue/
-├── app/                          # Backend (Python)
-│   ├── api.py                   # FastAPI endpoints
-│   ├── app.py                   # Streamlit dashboard
-│   ├── config.py                # Configuration
-│   ├── sentiment_model.py        # ML models
-│   └── ...
-├── frontend/                     # Frontend (React)
-│   ├── src/
-│   │   ├── App.jsx             # Main app (after login)
-│   │   ├── Login.jsx           # Google Sign-In page
-│   │   ├── ProtectedApp.jsx    # Auth wrapper
-│   │   ├── firebase.js         # Firebase config
-│   │   ├── App.css             # Main styles
-│   │   ├── Login.css           # Login styles
-│   │   ├── index.css           # Global styles
-│   │   └── main.jsx            # Entry point
-│   ├── index.html              # HTML root (with background)
-│   ├── .env.local              # Firebase env vars
-│   ├── .env.example            # Firebase template
-│   ├── package.json            # Dependencies
-│   └── vite.config.js          # Vite config
-├── data/                        # Restaurant data (CSVs)
-├── scripts/                     # Utility scripts
-├── .env                         # Backend env vars (gitignored)
-├── .env.example                 # Backend template
-├── .gitignore                   # Git exclusions
-└── README.md                    # This file
+├── app/          Backend API, repository, schemas, AI client
+├── frontend/     React app
+├── data/         Restaurant and review CSV files
+├── scripts/      Import, training, and utility scripts
+└── README.md
 ```
 
-## Prerequisites
+## Requirements
 
 - Python 3.10+
 - Node.js 18+
-- PostgreSQL (local or Supabase)
-- Firebase project (for authentication)
+- PostgreSQL or Supabase
+- Firebase project for authentication
 
-## 1) Python Setup
+## Setup
 
-From project root:
+### 1. Backend
+
+From the project root:
 
 ```powershell
-# If you do not have a venv yet:
 python -m venv venv
-
-# Activate (PowerShell)
 .\venv\Scripts\Activate.ps1
-
-# Install dependencies
 python -m pip install -r requirements.txt
 ```
 
-## 2) Database Setup
-
-1. Create PostgreSQL database (example name): `review2revenue_db`
-2. Update DB connection if needed:
-- `DB_URL` in environment (recommended), or
-- hardcoded value in scripts if you are using defaults
-
-Load CSVs and compute metrics from project root:
+Set the backend environment variables in `.env`, then load the data:
 
 ```powershell
 python scripts/load_to_db.py
 python scripts/compute_metrics.py
 ```
 
-### Use Supabase (Recommended For Team Collaboration)
-
-Yes, you can switch from local PostgreSQL to Supabase without changing backend code, because this project already uses `DB_URL` from environment variables.
-
-1. Create a Supabase project.
-2. In Supabase dashboard, open `Project Settings -> Database` and copy the connection string.
-3. Put it in local `.env` as `DB_URL` (use the pooler endpoint and SSL):
-
-```env
-DB_URL=postgresql://postgres.YOUR_PROJECT_REF:YOUR_DB_PASSWORD@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres?sslmode=require
-```
-
-4. Ask each teammate to set their own local `.env` with the same `DB_URL`.
-5. Run scripts to load shared dataset once:
+Start the API:
 
 ```powershell
-python scripts/load_to_db.py
-python scripts/compute_metrics.py
+python -m uvicorn app.api:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Notes:
-- Keep `.env` private (already ignored by `.gitignore`).
-- Do not put real passwords or keys into `.env.example`.
-- If connection fails, verify SSL (`sslmode=require`) and your Supabase database password.
+### 2. Frontend
 
-## 3) Environment Variables Setup
-
-### Backend Configuration (.env)
-
-Use `.env.example` as reference. Create `.env` in project root with:
-
-**Database:**
-- `DB_URL` - PostgreSQL connection string
-
-**LLM APIs:**
-- `GROQ_API_KEY` - your Groq API key (primary provider)
-- `GROQ_BASE_URL` - default `https://api.groq.com/openai/v1`
-- `GROQ_MODEL` - default `llama-3.1-8b-instant`
-- `GEMINI_API_KEY` - your Gemini API key (secondary)
-- `GEMINI_BASE_URL` - default `https://generativelanguage.googleapis.com/v1beta`
-- `GEMINI_MODEL` - default `gemini-2.0-flash`
-- `ZAI_API_KEY` - your Z.AI key (optional)
-- `ZAI_BASE_URL` - default `https://api.z.ai/v1`
-- `ZAI_MODEL` - default `glm-4.5`
-
-**Server:**
-- `API_HOST` - default `0.0.0.0`
-- `API_PORT` - default `8000`
-
-**Google Services:**
-- `GOOGLE_PLACES_API_KEY` - Google Places API key (optional, for restaurant enrichment)
-
-**Firebase (Backend reference):**
-- Firebase config values (also in frontend/.env.local)
-
-Example:
-
-```env
-DB_URL=postgresql://your_user:your_password@localhost:5432/review2revenue_db
-GROQ_API_KEY=your_groq_key_here
-GOOGLE_PLACES_API_KEY=your_google_key_here
-VITE_FIREBASE_API_KEY=your_firebase_key_here
-```
-
-### Frontend Configuration (frontend/.env.local)
-
-Create `frontend/.env.local` with Firebase authentication:
-
-```env
-VITE_FIREBASE_API_KEY=YOUR_FIREBASE_API_KEY
-VITE_FIREBASE_AUTH_DOMAIN=YOUR_FIREBASE_AUTH_DOMAIN
-VITE_FIREBASE_PROJECT_ID=YOUR_FIREBASE_PROJECT_ID
-VITE_FIREBASE_STORAGE_BUCKET=YOUR_FIREBASE_STORAGE_BUCKET
-VITE_FIREBASE_MESSAGING_SENDER_ID=YOUR_FIREBASE_MESSAGING_SENDER_ID
-VITE_FIREBASE_APP_ID=YOUR_FIREBASE_APP_ID
-VITE_FIREBASE_MEASUREMENT_ID=YOUR_FIREBASE_MEASUREMENT_ID
-```
-
-**How to get Firebase config:**
-1. Go to [Firebase Console](https://console.firebase.google.com/)
-2. Create a new project or select existing
-3. Add a Web app
-4. Copy the `firebaseConfig` object values
-5. Use the values for VITE_ variables above
-6. Save as `frontend/.env.local`
-
-**Important:** 
-- `VITE_` prefix is required for Vite to expose variables to frontend
-- `.env.local` is gitignored and never committed
-- Each developer needs their own `.env.local` with their Firebase credentials
-
-### Security Notes
-
-- `.env` and `frontend/.env.local` are **gitignored** and never committed
-- Never put real secrets in `.env.example` or source code
-- `.env.example` contains template values with setup instructions
-- Each team member should have their own `.env` and `.env.local`
-
-### API Key Priority
-
-When making requests:
-1. Groq (`GROQ_API_KEY`) - fastest
-2. Gemini (`GEMINI_API_KEY`) - reliable
-3. Z.AI (`ZAI_API_KEY`) - optional
-4. Fallback - rule-based response
-
-## 4) Frontend Setup (React + Firebase Auth)
-
-Install dependencies and start development server:
+In a second terminal:
 
 ```powershell
 cd frontend
@@ -250,14 +77,49 @@ npm install
 npm run dev
 ```
 
-The frontend will:
-- Load at `http://localhost:5173` (or next available port)
-- Show **Google Sign-In page** first
-- Require authentication before accessing app
-- Display animated foodie theme with:
-  - Floating food emojis (🍕🍣🍜 etc)
-  - Sparkle animations
-  - Glassmorphic cards
+The app usually opens at `http://localhost:5173`.
+
+## Environment variables
+
+### Backend `.env`
+
+Common values:
+
+- `DB_URL`
+- `GROQ_API_KEY`
+- `GEMINI_API_KEY`
+- `ZAI_API_KEY`
+- `GOOGLE_PLACES_API_KEY`
+- `API_HOST`
+- `API_PORT`
+
+### Frontend `frontend/.env.local`
+
+Use your Firebase web app values:
+
+```env
+VITE_FIREBASE_API_KEY=...
+VITE_FIREBASE_AUTH_DOMAIN=...
+VITE_FIREBASE_PROJECT_ID=...
+VITE_FIREBASE_STORAGE_BUCKET=...
+VITE_FIREBASE_MESSAGING_SENDER_ID=...
+VITE_FIREBASE_APP_ID=...
+VITE_FIREBASE_MEASUREMENT_ID=...
+```
+
+## Main API endpoints
+
+- `GET /api/restaurants/search`
+- `GET /api/restaurants/by-store-id`
+- `POST /api/ask`
+- `POST /api/chat/start`
+- `GET /api/chat/history`
+
+## Notes
+
+- Keep `.env` and `frontend/.env.local` private.
+- Do not commit real API keys.
+- The repository still includes `app/app.py` for the legacy Streamlit view.
   - Wavy ribbon at bottom
   - Responsive design for all screen sizes
 

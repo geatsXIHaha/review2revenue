@@ -32,6 +32,7 @@ from .repository import (
     search_restaurants_by_name,
     start_conversation_with_initial_messages,
     upsert_conversation,
+    update_assistant_message_restaurants,
 )
 from .schemas import (
     AskRequest,
@@ -1006,6 +1007,7 @@ def start_chat_conversation(payload: StartConversationRequest) -> StartConversat
         answer=answer,
     )
     if existing_conversation_id:
+        update_assistant_message_restaurants(existing_conversation_id, payload.restaurants)
         return StartConversationResponse(conversation_id=existing_conversation_id)
 
     conversation_id = (payload.conversation_id or str(uuid4())).strip()
@@ -1019,6 +1021,7 @@ def start_chat_conversation(payload: StartConversationRequest) -> StartConversat
         question=question,
         answer=answer,
         restaurant_name=None,
+        restaurants=payload.restaurants,
     )
     return StartConversationResponse(conversation_id=conversation_id)
 

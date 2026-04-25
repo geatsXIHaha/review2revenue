@@ -1,263 +1,74 @@
-# Review2Revenue - Implementation Summary (April 2026)
+# Review2Revenue - Implementation Summary
 
-## 🎯 Current Status: Production Ready ✅
+This file gives a short overview of the current system and the main changes in the April 2026 update.
 
-Implemented a complete **role-based access control system** with **permanent role selection** and **vendor restaurant locking**, featuring separate diner and vendor experiences.
+## Current status
 
----
+- The app uses fixed roles: Diner or Vendor
+- Role selection is permanent after registration
+- Vendors are locked to one restaurant through `store_id`
+- The frontend shows restaurant cards on both the home page and chat page
+- The backend returns database-based summaries when no external LLM is available
 
-## 📋 Major Changes (April 2026 Update)
+## What changed
 
-### 1️⃣ **Permanent Role Selection**
-- Users select role during registration and **cannot change it afterward**
-- Role confirmation screen displays permanent warning
-- Role stored in Supabase `users.role` column
-- Backend validates role on every request
+### Role and access flow
 
-### 2️⃣ **Separate Diner and Vendor Views**
-- **Diner View** (🍴): 
-  - Optional restaurant search input
-  - Can explore any restaurant
-  - Receives recommendations with reasoning
-  
-- **Vendor View** (🏪):
-  - Read-only restaurant display (name + store_id)
-  - Cannot search or access other restaurants
-  - Receives business analysis for their restaurant only
+- Users sign in with Firebase
+- Supabase stores the user profile and permanent role
+- `ProtectedApp.jsx` checks whether registration is needed
+- If the profile does not exist yet, the user sees the registration flow
 
-### 3️⃣ **Vendor Restaurant Locking**
-- Vendors registered with specific `store_id`
-- Cannot modify or search restaurant selection
-- Restaurant data fetched via `/api/restaurants/by-store-id?store_id=X`
-- Backend uses `find_restaurant_by_store_id()` to query database directly
+### Diner experience
 
-### 4️⃣ **Backend API Enhancements**
-- **New Endpoint**: `GET /api/restaurants/by-store-id`
-  - Fetches restaurant by store_id
-  - Used during vendor app initialization
-  - Direct database query for performance
+- Diner users can ask for restaurant recommendations
+- The app searches restaurants from the database
+- The response includes the AI answer and restaurant cards
 
-- **Store_ID Processing**:
-  - Backend receives `store_id` in vendor requests
-  - Validates vendor's assigned restaurant
-  - Uses store_id to fetch reviews and metrics
+### Vendor experience
 
-### 5️⃣ **Frontend Improvements**
-- Immediate profile refresh after registration (no re-login needed)
-- Vendor restaurant name displays correctly from database
-- Role badge in header (color-coded)
-- Smooth transitions between registration and app
-- Responsive design for all screens
+- Vendor users only see their assigned restaurant
+- Restaurant data is fetched with `/api/restaurants/by-store-id`
+- Vendors get business insights, review summaries, and menu details for their own restaurant
 
----
+## Important backend changes
 
-## 📁 Key Files Modified
+- `GET /api/restaurants/by-store-id` was added for vendor lookup
+- `POST /api/ask` now returns restaurant data for the frontend to render
+- The chat start flow now keeps restaurant cards with the first message
+- The AI client falls back to a database summary instead of a hardcoded warning message
 
-### Backend (`app/` directory)
+## Important frontend changes
 
-1. **`app/repository.py`**
-   - ✨ NEW: `find_restaurant_by_store_id(store_id)` function
-   - Queries database by store_id directly
-   - Fallback to CSV if database unavailable
+- `App.jsx` renders restaurant cards below the AI answer
+- `ChatPage.jsx` keeps restaurant cards in conversation history
+- `ProtectedApp.jsx` refreshes the user profile after registration
+- The shared restaurant card component now opens correct Google Maps links
 
-2. **`app/api.py`**
-   - ✨ NEW: `GET /api/restaurants/by-store-id` endpoint
-   - Imported `find_restaurant_by_store_id` from repository
-   - Handles vendor restaurant lookups
-   - Proper error handling (404 if not found)
+## Main files
 
-### Frontend (`frontend/src/` directory)
+- `app/api.py`: request handling and API endpoints
+- `app/repository.py`: database queries and chat persistence
+- `app/zai_client.py`: AI provider routing and fallback logic
+- `frontend/src/App.jsx`: home page UI and chat handoff
+- `frontend/src/ChatPage.jsx`: chat UI and history loading
+- `frontend/src/ProtectedApp.jsx`: auth and registration routing
 
-1. **`ProtectedApp.jsx`**
-   - Enhanced registration completion callback
-   - Immediately refreshes user profile from Supabase
-   - Eliminates need for re-login after registration
-   - Sets vendor role correctly on first visit
+## Simple data flow
 
-2. **`App.jsx`**
-   - Refactored vendor restaurant fetch
-   - Calls new `/api/restaurants/by-store-id` endpoint
-   - Displays restaurant name + store_id clearly
-   - Vendor-specific prompt examples
-   - Separate conditional rendering for diner vs vendor
-   - Hidden restaurant search for vendors
+1. User logs in with Google
+2. App checks Supabase for a profile
+3. If needed, the user completes registration
+4. The home page sends a prompt to `/api/ask`
+5. Backend returns answer text plus restaurant data
+6. Frontend renders the answer and restaurant cards
+7. If the user opens chat, the same data is passed into the conversation
 
-3. **`Registration.jsx`**
-   - Role confirmation step with permanent warning
-   - Back button on confirmation (with confirmation dialog)
-   - Vendor restaurant search (min 2 chars, 500ms debounce)
-   - Restaurant selection prevents further changes
+## Notes
 
-4. **`useRegistration.js` (hook)**
-   - Complete state machine for registration
-   - Role selection → Role confirmation → Vendor matching → Completion
-   - `selectRole()`, `confirmRole()`, `selectRestaurant()`, `completeRegistration()`
-   - Comprehensive error handling
-
----
-
-## 🗄️ Database Schema
-
-### Supabase `users` Table
-```sql
-id (UUID)               -- Firebase UID, PRIMARY KEY
-email (TEXT)            -- User email
-user_name (TEXT)        -- Display name
-role (ENUM)             -- 'diner' or 'vendor' (PERMANENT)
-store_id (TEXT FK)      -- Vendor's restaurant store_id
-created_at (TIMESTAMP)  -- Account creation timestamp
-```
-
-### PostgreSQL `restaurants` Table (Backend)
-```sql
-store_id (TEXT)        -- PRIMARY KEY
-name (TEXT)            -- Restaurant name
-food_type (TEXT)       -- Cuisine type
-avg_rating (NUMERIC)   -- Average rating
-review_count (INTEGER) -- Number of reviews
-... other columns
-```
-
----
-
-## 🔄 Registration Flow
-
-```
-1. User Logs In (Firebase Google Sign-In)
-   ↓
-2. Check Supabase for user profile
-   ├─ Found → Go to App.jsx
-   └─ Not Found → Show Registration
-   
-3. STEP 1: Role Selection
-   ├─ 🍴 Diner Button
-   └─ 🏪 Vendor Button
-   ↓
-4. STEP 1.5: Role Confirmation
-   ├─ Shows selected role
-   ├─ ⚠️ Warning: "CANNOT change in the future"
-   └─ Buttons: "Choose Different Role" or "Confirm {Role}"
-   ↓
-5. STEP 2 (Vendor Only): Restaurant Search
-   ├─ Type restaurant name (min 2 chars)
-   ├─ Shows dropdown suggestions
-   └─ Select restaurant
-   ↓
-6. STEP 3: Completion
-   ├─ Saves profile to Supabase
-   └─ Frontend refreshes user profile immediately
-   
-7. App.jsx Opens
-   ├─ Diner → Shows restaurant search + recommendations
-   └─ Vendor → Shows restaurant name + store_id + business insights
-```
-
----
-
-## 🔌 API Endpoints
-
-### Authentication
-- `POST /api/auth/register` - Registration (handled by Firebase + Supabase)
-- `GET /api/auth/user` - Get current user (Firebase)
-
-### Restaurants
-- `GET /api/restaurants/search?query=<name>&limit=<num>` - Search by name (Diner)
-- `GET /api/restaurants/by-store-id?store_id=<id>` - Get by store_id (Vendor) ✨ NEW
-
-### AI Analysis
-- `POST /api/ask` - Submit prompt
-  - Diner: Uses `restaurant_name`
-  - Vendor: Uses `store_id`
-
-### Health
-- `GET /health` - Health check
-
----
-
-## ✨ Features Overview
-
-| Feature | Diner | Vendor |
-|---------|-------|--------|
-| Role Changeable | ❌ No | ❌ No |
-| Search Restaurants | ✅ Yes | ❌ No |
-| View Own Restaurant | ❌ N/A | ✅ Yes |
-| View Other Restaurants | ✅ Yes | ❌ No |
-| Get Recommendations | ✅ Yes | ❌ No |
-| Get Business Analysis | ❌ No | ✅ Yes |
-| Optional Reviews | ✅ Yes | ✅ Yes |
-
----
-
-## 🛠️ Tech Stack
-
-- **Frontend**: React 18+, Vite, Firebase Auth, Supabase
-- **Backend**: FastAPI (Python), SQLAlchemy
-- **Database**: PostgreSQL (Supabase), CSV fallback
-- **AI**: Groq, Gemini, Z.AI (LLM providers)
-- **Authentication**: Firebase (Google Sign-In) + Supabase (Profiles)
-- **UI**: React Hooks, CSS Glassmorphism
-
----
-
-## ✅ Checklist
-
-- [x] Role-based access control with permanence
-- [x] Separate diner and vendor views
-- [x] Vendor restaurant locking
-- [x] Restaurant name fetched from database
-- [x] New API endpoint for store_id lookup
-- [x] Immediate profile refresh after registration
-- [x] No re-login required after registration
-- [x] Role badge in header
-- [x] Comprehensive error handling
-- [x] Responsive design
-- [x] Security (role validation, CORS, environment variables)
-- [x] Documentation (README, env.example, REGISTRATION_GUIDE)
-
----
-
-## 📖 Documentation Files
-
-1. **README.md** - Main project documentation with setup instructions
-2. **REGISTRATION_GUIDE.md** - Detailed registration workflow architecture
-3. **IMPLEMENTATION_SUMMARY.md** - This file, overview of changes
-4. **.env.example** - Backend configuration template
-5. **frontend/.env.example** - Frontend configuration template
-
----
-
-**Last Updated:** April 23, 2026
-**Status:** ✅ Production Ready
-
----
-
-### Modified Files
-
-1. **`frontend/package.json`**
-   - Added `@supabase/supabase-js` dependency (^2.39.0)
-
-2. **`frontend/.env.example`**
-   - Added Supabase configuration section
-   - Documented required variables with setup instructions
-
-3. **`frontend/src/ProtectedApp.jsx`**
-   - Integrated Supabase import
-   - Added `userProfile` and `registrationNeeded` state
-   - Enhanced auth state listener to check Supabase for user profile
-   - Added conditional rendering for Registration component
-   - Updated flow: Login → Registration (if needed) → App
-
----
-
-## 🔄 Registration Flow
-
-```
-User Login (Firebase Google Auth)
-    ↓
-Check if profile exists in Supabase
-    ↓
-    ├─→ Profile exists? → Show App
-    └─→ Profile doesn't exist? → Show Registration
+- This project still includes a legacy Streamlit app in `app/app.py`
+- The source of truth for restaurant data is PostgreSQL or Supabase
+- Keep `.env` files private
             ↓
         Select Role (Diner/Vendor)
             ↓

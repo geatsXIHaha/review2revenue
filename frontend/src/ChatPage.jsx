@@ -6,6 +6,90 @@ import { useGeolocation } from './hooks/useGeolocation';
 const API_BASE = 'http://localhost:8000'
 const CHAT_CACHE_PREFIX = 'review2revenue.chatCache.v1'
 
+function getChatCacheKey(userId, role) {
+  return `${CHAT_CACHE_PREFIX}.${role || 'diner'}.${userId || 'anonymous'}`
+}
+
+function safeJsonParse(raw, fallback) {
+  try {
+    return raw ? JSON.parse(raw) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function normalizeConversationRows(data) {
+  const rows = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.conversations)
+      ? data.conversations
+      : Array.isArray(data?.rows)
+        ? data.rows
+        : []
+
+  return rows
+    .map((conversation) => ({
+      conversation_id: conversation?.conversation_id || conversation?.conversationId || conversation?.id || '',
+      last_message: conversation?.last_message || conversation?.lastMessage || conversation?.preview || conversation?.title || 'Untitled chat',
+      updated_at: conversation?.updated_at || conversation?.updatedAt || conversation?.modified_at || new Date().toISOString(),
+    }))
+    .filter((conversation) => Boolean(conversation.conversation_id))
+}
+
+function normalizeHistoryMessages(data) {
+  const rows = Array.isArray(data)
+    ? data
+    : Array.isArray(data?.messages)
+      ? data.messages
+      : Array.isArray(data?.history)
+        ? data.history
+        : Array.isArray(data?.data)
+          ? data.data
+          : []
+
+  return rows.map((message, index) => ({
+    id: message?.id || message?.message_id || `${index}`,
+    role: message?.role || message?.sender || (message?.is_assistant ? 'assistant' : 'user'),
+    message: message?.message || message?.text || message?.content || '',
+    restaurants: Array.isArray(message?.restaurants)
+      ? message.restaurants
+      : (Array.isArray(message?.restaurants_json) ? message.restaurants_json : []),
+  }))
+}
+
+function readChatCache(userId, role) {
+  if (typeof sessionStorage === 'undefined') {
+    return { conversations: [], messagesByConversation: {} }
+  }
+
+  const raw = sessionStorage.getItem(getChatCacheKey(userId, role))
+  const parsed = safeJsonParse(raw, null)
+  return {
+    conversations: Array.isArray(parsed?.conversations) ? parsed.conversations : [],
+    messagesByConversation: parsed?.messagesByConversation && typeof parsed.messagesByConversation === 'object'
+      ? parsed.messagesByConversation
+      : {},
+  }
+}
+
+function writeChatCache(userId, role, conversations, messagesByConversation) {
+  if (typeof sessionStorage === 'undefined' || !userId) return
+
+  try {
+    sessionStorage.setItem(
+      getChatCacheKey(userId, role),
+      JSON.stringify({
+        conversations: Array.isArray(conversations) ? conversations : [],
+        messagesByConversation: messagesByConversation && typeof messagesByConversation === 'object'
+          ? messagesByConversation
+          : {},
+      }),
+    )
+  } catch {
+    // Ignore cache write failures so the chat stays usable.
+  }
+}
+
 function isNearestIntent(text) {
   const q = String(text || '').toLowerCase()
   return ['nearest', 'closest', 'near me', 'nearby', 'paling dekat', 'dekat sini'].some((k) => q.includes(k))
@@ -703,7 +787,12 @@ function ChatPage({ userProfile }) {
       optimisticConversationIdRef.current = pendingConversationId
       const optimisticMessages = [
         { id: `pending-u-${pendingConversationId}`, role: 'user', message: pending.question, restaurants: [] },
-        { id: `pending-a-${pendingConversationId}`, role: 'assistant', message: pending.answer, restaurants: [] },
+        {
+          id: `pending-a-${pendingConversationId}`,
+          role: 'assistant',
+          message: pending.answer,
+          restaurants: Array.isArray(pending.restaurants) ? pending.restaurants : [],
+        },
       ]
       setConversationId(pendingConversationId)
       setChatMessages(optimisticMessages)
@@ -726,6 +815,7 @@ function ChatPage({ userProfile }) {
             role,
             question: pending.question,
             answer: pending.answer,
+            restaurants: Array.isArray(pending.restaurants) ? pending.restaurants : [],
           }),
         })
         clearTimeout(timeoutId)
