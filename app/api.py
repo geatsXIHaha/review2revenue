@@ -874,6 +874,35 @@ def get_menu_by_store_id(store_id: str = Query(min_length=1)) -> Dict[str, list]
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/menu/grouped")
+def get_menu_grouped_by_category(store_id: str = Query(min_length=1)) -> Dict[str, list]:
+    """Return menu items grouped by category with item name and price.
+    Response format:
+      {"categories": [{"category": "Main", "items": [{"menu_id":..., "item_name":..., "price_rm":...}, ...]}, ...]}
+    """
+    try:
+        items = get_menu_items_by_store_id(store_id) or []
+        groups = {}
+        for m in items:
+            cat = (m.get("category") or "Uncategorized").strip()
+            groups.setdefault(cat, []).append({
+                "menu_id": m.get("menu_id"),
+                "item_name": m.get("item_name"),
+                "price_rm": m.get("price_rm"),
+            })
+
+        categories = []
+        for cat in sorted(groups.keys()):
+            sorted_items = sorted(groups[cat], key=lambda x: ((x.get("price_rm") is None), float(x.get("price_rm") or 0.0), (x.get("item_name") or "").lower()))
+            categories.append({"category": cat, "items": sorted_items})
+
+        return {"categories": categories}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/reviews/by-store-id")
 def get_reviews_by_store_id(
     store_id: str = Query(min_length=1),
