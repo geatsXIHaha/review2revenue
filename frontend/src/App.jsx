@@ -527,39 +527,6 @@ function App({ userProfile }) {
                 />
               </label>
 
-              <label className="field">
-                <span>Restaurant Name (optional)</span>
-                <div className="restaurant-search-wrap">
-                  <input
-                    type="text"
-                    value={restaurantName}
-                    onChange={(event) => setRestaurantName(event.target.value)}
-                    onFocus={() => setShowRestaurantDropdown(restaurantOptions.length > 0)}
-                    onBlur={() => setTimeout(() => setShowRestaurantDropdown(false), 120)}
-                    placeholder="Example: Village Nasi Lemak"
-                  />
-                  {showRestaurantDropdown && restaurantOptions.length > 0 ? (
-                    <ul className="restaurant-dropdown" role="listbox" aria-label="Restaurant suggestions">
-                      {restaurantOptions.map((option) => (
-                        <li key={option.store_id}>
-                          <button
-                            type="button"
-                            className="restaurant-option"
-                            onMouseDown={() => {
-                              setRestaurantName(option.name)
-                              setShowRestaurantDropdown(false)
-                            }}
-                          >
-                            <span>{option.name}</span>
-                            <small>{option.food_type}</small>
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </div>
-                <small className="field-hint">Type restaurant name to see matches from clean_restaurants data.</small>
-              </label>
 
               <div className="actions">
                 <button type="submit" className="primary" disabled={isLoading || !prompt.trim()}>
