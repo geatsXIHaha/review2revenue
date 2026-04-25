@@ -693,6 +693,25 @@ def _format_ts(value: Any) -> Any:
     return value
 
 
+def _normalize_or_infer_sentiment(sentiment: Any, rating: Any) -> str:
+    raw = str(sentiment or "").strip().lower()
+    if raw in {"positive", "pos"}:
+        return "positive"
+    if raw in {"negative", "neg"}:
+        return "negative"
+    if raw == "neutral":
+        return "neutral"
+    try:
+        numeric = float(rating)
+    except (TypeError, ValueError):
+        return "neutral"
+    if numeric >= 4:
+        return "positive"
+    if numeric <= 2:
+        return "negative"
+    return "neutral"
+
+
 def _review_brief(r: Dict) -> Dict:
     # Provide both `review_text` and `text` keys for frontend compatibility,
     # include an `id` if present, and normalized timestamp.
@@ -701,7 +720,7 @@ def _review_brief(r: Dict) -> Dict:
         "review_text": (r.get("review_text") or r.get("text") or "").strip(),
         "text": (r.get("review_text") or r.get("text") or "").strip(),
         "overall_rating": r.get("overall_rating"),
-        "sentiment": r.get("sentiment"),
+        "sentiment": _normalize_or_infer_sentiment(r.get("sentiment"), r.get("overall_rating")),
         "updated_at": _format_ts(r.get("updated_at") or r.get("created_at")),
     }
 

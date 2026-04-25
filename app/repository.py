@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 from .config import DB_URL
+from .sentiment_model import predict_sentiments_batch
 
 engine: Engine = create_engine(DB_URL)
 _CHAT_SCHEMA_INIT_LOCK = threading.Lock()
@@ -826,18 +827,53 @@ def insert_bulk_reviews(records: list) -> int:
     if not records:
         return 0
 
+    def _normalize_sentiment(value: Any) -> Optional[str]:
+        raw = str(value or "").strip().lower()
+        if raw in {"positive", "pos"}:
+            return "positive"
+        if raw in {"negative", "neg"}:
+            return "negative"
+        if raw == "neutral":
+            return "neutral"
+        return None
+
+    def _sentiment_from_rating(value: Any) -> str:
+        try:
+            rating = float(value)
+        except (TypeError, ValueError):
+            return "neutral"
+        if rating >= 4:
+            return "positive"
+        if rating <= 2:
+            return "negative"
+        return "neutral"
+
+    review_texts = [str((record or {}).get("review_text") or "").strip() for record in records]
+    predictions = predict_sentiments_batch(review_texts) if review_texts else []
+    normalized_records: List[Dict[str, Any]] = []
+    for index, record in enumerate(records):
+        row = dict(record or {})
+        sentiment = _normalize_sentiment(row.get("sentiment"))
+        if sentiment is None:
+            predicted = predictions[index] if index < len(predictions) else None
+            sentiment = _normalize_sentiment(predicted)
+        if sentiment is None:
+            sentiment = _sentiment_from_rating(row.get("overall_rating"))
+        row["sentiment"] = sentiment
+        normalized_records.append(row)
+
     try:
         with engine.begin() as conn:
             conn.execute(
                 text("""
                     INSERT INTO reviews 
-                        (uuid, store_id, review_text, overall_rating, food_rating, rider_rating, updated_at)
+                        (uuid, store_id, review_text, overall_rating, food_rating, rider_rating, sentiment, updated_at)
                     VALUES 
-                        (gen_random_uuid(), :store_id, :review_text, :overall_rating, :food_rating, :rider_rating, NOW())
+                        (gen_random_uuid(), :store_id, :review_text, :overall_rating, :food_rating, :rider_rating, :sentiment, NOW())
                 """),
-                records
+                normalized_records
             )
-        return len(records)
+        return len(normalized_records)
     except Exception as e:
         print(f"Review bulk insert error: {e}")
         raise Exception(f"Failed to insert reviews: {e}")

@@ -31,6 +31,17 @@ function getDeviceLocation() {
   })
 }
 
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const toRad = (value) => (value * Math.PI) / 180
+  const earthRadiusKm = 6371
+  const deltaLat = toRad(lat2 - lat1)
+  const deltaLng = toRad(lng2 - lng1)
+  const a =
+    Math.sin(deltaLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(deltaLng / 2) ** 2
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
 const dinerExamples = [
   'I want to eat nasi lemak',
   'I want a cheap restaurant near me',
@@ -74,6 +85,7 @@ function App({ userProfile }) {
   const [isInsertingReview, setIsInsertingReview] = useState(false)
   const [insertReviewStatus, setInsertReviewStatus] = useState('')
   const [recommendedRestaurants, setRecommendedRestaurants] = useState([])
+  const [currentLocation, setCurrentLocation] = useState(null)
 
   function navigateTo(path) {
     if (window.location.pathname === path) return
@@ -89,6 +101,22 @@ function App({ userProfile }) {
   const [menuFile, setMenuFile] = useState(null);
   const [uploadStatus, setUploadStatus] = useState('');
   const [isLoadingUpload, setIsLoadingUpload] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadLocation() {
+      try {
+        const location = await getDeviceLocation()
+        if (!cancelled) setCurrentLocation(location)
+      } catch {
+        if (!cancelled) setCurrentLocation(null)
+      }
+    }
+    loadLocation()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const handleUploadCSV = async () => {
     if (!csvFile || !userProfile?.store_id) {
@@ -281,7 +309,9 @@ function App({ userProfile }) {
     }
 
     let locationPayload = {}
-    if (role === 'diner' && isNearestIntent(submittedPrompt)) {
+    if (role === 'diner' && currentLocation) {
+      locationPayload = { user_lat: currentLocation.lat, user_lng: currentLocation.lng }
+    } else if (role === 'diner' && isNearestIntent(submittedPrompt)) {
       try {
         const loc = await getDeviceLocation()
         locationPayload = { user_lat: loc.lat, user_lng: loc.lng }
@@ -1078,7 +1108,7 @@ function App({ userProfile }) {
                     📌 Restaurant Details
                   </p>
                   {recommendedRestaurants.map((restaurant, index) => (
-                    <RestaurantCard key={restaurant.name || index} restaurant={restaurant} />
+                    <RestaurantCard key={restaurant.name || index} restaurant={restaurant} currentLocation={currentLocation} />
                   ))}
                 </div>
               ) : null}
@@ -1100,12 +1130,137 @@ function App({ userProfile }) {
   )
 }
 
-function RestaurantCard({ restaurant }) {
+function RestaurantCard({ restaurant, currentLocation }) {
+  const [showMenu, setShowMenu] = useState(false)
+  const [menuItems, setMenuItems] = useState([])
+  const [isLoadingMenu, setIsLoadingMenu] = useState(false)
+  const [menuError, setMenuError] = useState('')
+  const [showReviews, setShowReviews] = useState(false)
+  const [reviews, setReviews] = useState([])
+  const [isLoadingReviews, setIsLoadingReviews] = useState(false)
+  const [reviewsError, setReviewsError] = useState('')
+  const [reviewFilter, setReviewFilter] = useState('all')
+
   const {
-    name, food_type, avg_rating, address, phone, website,
+    store_id, name, food_type, avg_rating, address, phone, website,
     distance_km, operating_hours_today, price_description,
     sentiment_summary, lat, lng,
   } = restaurant
+
+  function normalizeCategory(item) {
+    if (!item) return ''
+    const raw =
+      (typeof item.category === 'string' && item.category)
+      || (item.category && typeof item.category === 'object' && (item.category.name || item.category.title))
+      || item.category_name
+      || item.section
+      || ''
+    return String(raw).trim()
+  }
+
+  function sortMenuItems(items) {
+    return (items || []).slice().sort((a, b) => {
+      const ca = (a.category || '').toLowerCase()
+      const cb = (b.category || '').toLowerCase()
+      if (ca < cb) return -1
+      if (ca > cb) return 1
+      const pa = a.price_rm === null || a.price_rm === undefined ? Infinity : Number(a.price_rm)
+      const pb = b.price_rm === null || b.price_rm === undefined ? Infinity : Number(b.price_rm)
+      if (pa !== pb) return pa - pb
+      const ia = (a.item_name || '').toLowerCase()
+      const ib = (b.item_name || '').toLowerCase()
+      if (ia < ib) return -1
+      if (ia > ib) return 1
+      return 0
+    })
+  }
+
+  function renderReviewStars(value) {
+    const raw = Number(value)
+    if (!Number.isFinite(raw)) return '☆☆☆☆☆'
+    const clamped = Math.max(0, Math.min(5, raw))
+    const rounded = Math.round(clamped)
+    return '★'.repeat(rounded) + '☆'.repeat(5 - rounded)
+  }
+
+  async function fetchMenu() {
+    if (Array.isArray(restaurant?.menu_items) && restaurant.menu_items.length > 0) {
+      const normalized = restaurant.menu_items.map((it) => ({
+        ...it,
+        category: normalizeCategory(it),
+      }))
+      setMenuItems(sortMenuItems(normalized))
+      setMenuError('')
+      setShowMenu(true)
+      return
+    }
+
+    if (!store_id) {
+      setMenuError('No store_id available for this restaurant')
+      return
+    }
+
+    setIsLoadingMenu(true)
+    setMenuItems([])
+    setMenuError('')
+
+    try {
+      const response = await fetch(`${API_BASE}/api/menu/grouped?store_id=${encodeURIComponent(store_id)}`)
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}))
+        const msg = err.detail || `Failed to fetch menu (status ${response.status})`
+        throw new Error(msg)
+      }
+      const data = await response.json()
+      if (Array.isArray(data.categories)) {
+        const flat = []
+        data.categories.forEach((cat) => {
+          const cname = (cat.category || 'Uncategorized').toString().trim()
+          ;(cat.items || []).forEach((it) => {
+            flat.push({ ...it, category: cname })
+          })
+        })
+        setMenuItems(sortMenuItems(flat))
+      } else {
+        setMenuItems(Array.isArray(data.menu_items) ? sortMenuItems(
+          data.menu_items.map((it) => ({ ...it, category: normalizeCategory(it) }))
+        ) : [])
+      }
+      setShowMenu(true)
+    } catch (err) {
+      setMenuError(err.message || 'Failed to fetch menu')
+      setShowMenu(false)
+    } finally {
+      setIsLoadingMenu(false)
+    }
+  }
+
+  async function fetchReviews() {
+    if (!store_id) {
+      setReviewsError('No store_id available for this restaurant')
+      return
+    }
+
+    setIsLoadingReviews(true)
+    setReviews([])
+    setReviewsError('')
+
+    try {
+      const response = await fetch(`${API_BASE}/api/reviews/by-store-id?store_id=${encodeURIComponent(store_id)}`)
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}))
+        throw new Error(err.detail || `Failed to fetch reviews (status ${response.status})`)
+      }
+      const data = await response.json()
+      setReviews(Array.isArray(data) ? data : (data.reviews || []))
+      setShowReviews(true)
+    } catch (err) {
+      setReviewsError(err.message || 'Failed to fetch reviews')
+      setShowReviews(false)
+    } finally {
+      setIsLoadingReviews(false)
+    }
+  }
 
   const googleMapsUrl = address
     ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`
@@ -1120,6 +1275,15 @@ function RestaurantCard({ restaurant }) {
     : null
   const posRatio = sentiment_summary?.positive_ratio
   const sentimentColor = posRatio >= 0.7 ? '#22c55e' : posRatio >= 0.5 ? '#f59e0b' : '#ef4444'
+  const restaurantLat = Number(restaurant?.lat ?? restaurant?.google_lat)
+  const restaurantLng = Number(restaurant?.lng ?? restaurant?.google_lng)
+  const backendDistance = Number(distance_km)
+  const fallbackDistance = currentLocation && Number.isFinite(restaurantLat) && Number.isFinite(restaurantLng)
+    ? haversineKm(currentLocation.lat, currentLocation.lng, restaurantLat, restaurantLng)
+    : null
+  const displayDistance = Number.isFinite(backendDistance)
+    ? backendDistance
+    : (Number.isFinite(fallbackDistance) ? fallbackDistance : null)
 
   return (
     <div style={{
@@ -1146,11 +1310,16 @@ function RestaurantCard({ restaurant }) {
       </div>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
-        {distance_km != null && (
+        {displayDistance != null ? (
           <span style={{
             background: '#eff6ff', color: '#1d4ed8', borderRadius: '20px',
             padding: '3px 9px', fontSize: '0.75rem', fontWeight: '600',
-          }}>📍 {Number(distance_km).toFixed(1)} km away</span>
+          }}>📍 {displayDistance.toFixed(1)} km away</span>
+        ) : (
+          <span style={{
+            background: '#eff6ff', color: '#1d4ed8', borderRadius: '20px',
+            padding: '3px 9px', fontSize: '0.75rem', fontWeight: '600',
+          }}>📍 Distance unavailable</span>
         )}
         {operating_hours_today && (
           <span style={{
@@ -1219,6 +1388,174 @@ function RestaurantCard({ restaurant }) {
           )}
         </div>
       )}
+
+      <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={showMenu ? () => setShowMenu(false) : fetchMenu}
+            disabled={isLoadingMenu}
+            style={{
+              background: '#111827', color: '#fff', borderRadius: '8px', padding: '8px 12px',
+              fontWeight: 700, border: 'none', cursor: 'pointer',
+            }}
+          >
+            {isLoadingMenu ? 'Loading menu...' : (showMenu ? 'Hide Menu' : 'View Menu')}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => { if (!showReviews) fetchReviews(); else setShowReviews(false) }}
+            disabled={isLoadingReviews}
+            style={{
+              background: '#0b74de', color: '#fff', borderRadius: '8px', padding: '8px 12px',
+              fontWeight: 700, border: 'none', cursor: 'pointer',
+            }}
+          >
+            {isLoadingReviews ? 'Loading reviews...' : (showReviews ? 'Hide Reviews' : 'View Reviews')}
+          </button>
+        </div>
+
+        {menuError && (
+          <p style={{ marginTop: '0px', fontSize: '0.85rem', color: '#d32f2f' }}>{menuError}</p>
+        )}
+
+        {reviewsError && (
+          <p style={{ marginTop: '0px', fontSize: '0.85rem', color: '#d32f2f' }}>{reviewsError}</p>
+        )}
+
+        {showMenu && !isLoadingMenu && menuItems.length === 0 && (
+          <p style={{ marginTop: '0px', fontSize: '0.85rem', color: '#666' }}>No menu items found.</p>
+        )}
+
+        {showMenu && menuItems.length > 0 && (
+          <div style={{ marginTop: '8px' }}>
+            {(() => {
+              const groups = menuItems.reduce((acc, mi) => {
+                const raw = (mi.category || '').toString().trim()
+                const cat = raw.length > 0
+                  ? raw.charAt(0).toUpperCase() + raw.slice(1)
+                  : 'Uncategorized'
+                if (!acc[cat]) acc[cat] = []
+                acc[cat].push(mi)
+                return acc
+              }, {})
+
+              return Object.keys(groups).sort().map((cat) => (
+                <div key={cat} style={{ marginBottom: '10px' }}>
+                  <h4 style={{ margin: '6px 0', fontSize: '0.9rem', fontWeight: 700, color: '#444' }}>{cat}</h4>
+                  <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                    {groups[cat].map((mi, idx) => (
+                      <li key={mi.menu_id || idx} style={{
+                        display: 'flex', justifyContent: 'space-between',
+                        padding: '6px 0', borderTop: idx ? '1px solid #f3f3f3' : 'none',
+                      }}>
+                        <span style={{ fontWeight: 600 }}>{mi.item_name}</span>
+                        <span style={{ color: '#444' }}>RM {Number(mi.price_rm || 0).toFixed(2)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))
+            })()}
+          </div>
+        )}
+
+        {showReviews && (
+          <div style={{ marginTop: '8px', padding: '10px', background: '#fafafa', borderRadius: '8px' }}>
+            {isLoadingReviews ? (
+              <p style={{ margin: 0 }}>Loading reviews...</p>
+            ) : (
+              <>
+                <div style={{ marginBottom: '8px' }}>
+                  <p style={{ margin: '0 0 8px 0', fontSize: '0.75rem', color: '#aaa' }}>
+                    Total reviews: {reviews.length} | Showing: {
+                      reviews.filter((review) => {
+                        if (reviewFilter === 'all') return true
+                        const s = (review.sentiment || '').toLowerCase()
+                        const rating = Number(review.overall_rating || review.rating || 0)
+                        if (reviewFilter === 'positive') return s === 'positive' || rating >= 4
+                        if (reviewFilter === 'negative') return s === 'negative' || rating <= 2
+                        if (reviewFilter === 'neutral') return s === 'neutral' || rating === 3
+                        return true
+                      }).length
+                    }
+                  </p>
+                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                    {['all', 'positive', 'negative', 'neutral'].map((f) => (
+                      <button
+                        key={f}
+                        type="button"
+                        onClick={() => setReviewFilter(f)}
+                        style={{
+                          padding: '4px 12px', borderRadius: '20px', border: '1.5px solid',
+                          fontSize: '0.75rem', fontWeight: 700, cursor: 'pointer',
+                          background: reviewFilter === f ? (
+                            f === 'positive' ? '#22c55e' :
+                            f === 'negative' ? '#ef4444' :
+                            f === 'neutral' ? '#f59e0b' : '#111827'
+                          ) : '#fff',
+                          color: reviewFilter === f ? '#fff' : (
+                            f === 'positive' ? '#22c55e' :
+                            f === 'negative' ? '#ef4444' :
+                            f === 'neutral' ? '#f59e0b' : '#555'
+                          ),
+                          borderColor: (
+                            f === 'positive' ? '#22c55e' :
+                            f === 'negative' ? '#ef4444' :
+                            f === 'neutral' ? '#f59e0b' : '#ccc'
+                          ),
+                        }}
+                      >
+                        {f.charAt(0).toUpperCase() + f.slice(1)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {(() => {
+                  const filtered = reviews.filter((review) => {
+                    if (reviewFilter === 'all') return true
+                    const s = (review.sentiment || '').toLowerCase()
+                    const rating = Number(review.overall_rating || review.rating || 0)
+                    if (reviewFilter === 'positive') return s === 'positive' || rating >= 4
+                    if (reviewFilter === 'negative') return s === 'negative' || rating <= 2
+                    if (reviewFilter === 'neutral') return s === 'neutral' || rating === 3
+                    return true
+                  })
+
+                  return filtered.length === 0 ? (
+                    <p style={{ margin: 0, color: '#666', fontSize: '0.85rem' }}>No reviews found for this restaurant.</p>
+                  ) : (
+                    <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
+                      {filtered.map((review, idx) => (
+                        <li key={review.id || idx} style={{ padding: '8px 0', borderTop: idx ? '1px solid #eee' : 'none' }}>
+                          <p style={{ margin: '0 0 6px 0', fontSize: '0.85rem' }}>{review.review_text || review.text || review.message || ''}</p>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ fontWeight: 700, color: '#f59e0b' }}>{renderReviewStars(review.overall_rating || review.rating || 0)}</span>
+                              {review.sentiment && (
+                                <span style={{
+                                  fontSize: '0.7rem', fontWeight: 700, padding: '1px 7px', borderRadius: '20px',
+                                  background: review.sentiment === 'positive' ? '#dcfce7' : review.sentiment === 'negative' ? '#fee2e2' : '#fef9c3',
+                                  color: review.sentiment === 'positive' ? '#15803d' : review.sentiment === 'negative' ? '#b91c1c' : '#92400e',
+                                }}>
+                                  {review.sentiment}
+                                </span>
+                              )}
+                            </div>
+                            <small style={{ color: '#aaa' }}>{review.updated_at ? new Date(review.updated_at).toLocaleString() : ''}</small>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )
+                })()}
+              </>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

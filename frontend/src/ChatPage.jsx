@@ -109,6 +109,17 @@ function getDeviceLocation() {
   })
 }
 
+function haversineKm(lat1, lng1, lat2, lng2) {
+  const toRad = (value) => (value * Math.PI) / 180
+  const earthRadiusKm = 6371
+  const deltaLat = toRad(lat2 - lat1)
+  const deltaLng = toRad(lng2 - lng1)
+  const a =
+    Math.sin(deltaLat / 2) ** 2
+    + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(deltaLng / 2) ** 2
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+}
+
 const dinerExamples = [
   'I want to eat nasi lemak',
   'I want a cheap restaurant near me',
@@ -194,7 +205,7 @@ function sortMenuItems(items) {
 }
 
 // ── Restaurant Card ────────────────────────────────────────────────────────────
-function RestaurantCard({ restaurant, userProfile }) {
+function RestaurantCard({ restaurant, userProfile, currentLocation }) {
   const [showMenu, setShowMenu] = useState(false)
   const [menuItems, setMenuItems] = useState([])
   const [isLoadingMenu, setIsLoadingMenu] = useState(false)
@@ -316,6 +327,15 @@ function RestaurantCard({ restaurant, userProfile }) {
     : null
   const posRatio = sentiment_summary?.positive_ratio
   const sentimentColor = posRatio >= 0.7 ? '#22c55e' : posRatio >= 0.5 ? '#f59e0b' : '#ef4444'
+  const restaurantLat = Number(restaurant?.lat ?? restaurant?.google_lat)
+  const restaurantLng = Number(restaurant?.lng ?? restaurant?.google_lng)
+  const backendDistance = Number(distance_km)
+  const fallbackDistance = currentLocation && Number.isFinite(restaurantLat) && Number.isFinite(restaurantLng)
+    ? haversineKm(currentLocation.lat, currentLocation.lng, restaurantLat, restaurantLng)
+    : null
+  const displayDistance = Number.isFinite(backendDistance)
+    ? backendDistance
+    : (Number.isFinite(fallbackDistance) ? fallbackDistance : null)
 
   return (
     <div style={{
@@ -342,11 +362,16 @@ function RestaurantCard({ restaurant, userProfile }) {
       </div>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
-        {distance_km != null && (
+        {displayDistance != null ? (
           <span style={{
             background: '#eff6ff', color: '#1d4ed8', borderRadius: '20px',
             padding: '3px 9px', fontSize: '0.75rem', fontWeight: '600',
-          }}>📍 {Number(distance_km).toFixed(1)} km away</span>
+          }}>📍 {displayDistance.toFixed(1)} km away</span>
+        ) : (
+          <span style={{
+            background: '#eff6ff', color: '#1d4ed8', borderRadius: '20px',
+            padding: '3px 9px', fontSize: '0.75rem', fontWeight: '600',
+          }}>📍 Distance unavailable</span>
         )}
         {operating_hours_today && (
           <span style={{
@@ -599,8 +624,14 @@ function ChatPage({ userProfile }) {
   const messageCacheRef = useRef({})
   const [vendorRestaurantName, setVendorRestaurantName] = useState('')
 
-  const { coords, cityName, error: locError } = useGeolocation();
+  const { coords, cityName, error: locError, getLocation } = useGeolocation();
   const roleExamples = role === 'diner' ? dinerExamples : vendorExamples
+
+  useEffect(() => {
+    if (!coords) {
+      getLocation()
+    }
+  }, [coords, getLocation])
 
   function navigateTo(path) {
     if (window.location.pathname === path) return
@@ -1109,7 +1140,7 @@ function ChatPage({ userProfile }) {
                     textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '6px',
                   }}>📌 Restaurant Details</p>
                   {msg.restaurants.map((r, i) => (
-                    <RestaurantCard key={r.name || i} restaurant={r} userProfile={userProfile} />
+                    <RestaurantCard key={r.name || i} restaurant={r} userProfile={userProfile} currentLocation={coords} />
                   ))}
                 </div>
               )}
