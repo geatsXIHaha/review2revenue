@@ -15,6 +15,7 @@ from .repository import (
     find_restaurant_by_store_id,
     find_vendor_restaurant_by_user_id,
     get_chat_history,
+    get_menu_items_by_store_id,
     get_metrics_for_store_ids,
     get_recent_reviews,
     get_reviews_by_keywords,
@@ -868,6 +869,18 @@ def get_reviews_by_store_id(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/menu/by-store-id")
+def get_menu_by_store_id(
+    store_id: str = Query(min_length=1),
+    limit: int = Query(default=200, ge=1, le=500),
+) -> Dict[str, List[Dict]]:
+    try:
+        rows = get_menu_items_by_store_id(store_id=store_id, limit=limit)
+        return {"menu_items": rows}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/sentiment/engine")
 def sentiment_engine() -> Dict[str, str]:
     return {"engine": get_sentiment_engine_status()}
@@ -949,7 +962,7 @@ def start_chat_conversation(payload: StartConversationRequest) -> StartConversat
 @app.post("/api/menu/upload")
 async def upload_menu(
     file: UploadFile = File(...),
-    store_id: Optional[str] = Form(None),
+    store_id: str = Form(...),
 ) -> Dict:
     if not file.filename.endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are allowed.")
@@ -958,7 +971,10 @@ async def upload_menu(
         contents = await file.read()
         df = pd.read_csv(io.BytesIO(contents))
 
-        required_columns = ["menu_id", "store_id", "restaurant_name", "item_name", "category"]
+        if "price" not in df.columns and "price_rm" in df.columns:
+            df["price"] = df["price_rm"]
+
+        required_columns = ["item_name", "category", "price"]
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
             raise HTTPException(
@@ -966,14 +982,36 @@ async def upload_menu(
                 detail=f"CSV is missing required columns: {', '.join(missing_columns)}",
             )
 
-        # Default optional columns if not present in CSV
-        if "price_rm" not in df.columns:
-            df["price_rm"] = None
-        if "source" not in df.columns:
-            df["source"] = "manual_upload"
+        # Enforce mandatory form-level store_id from logged-in vendor.
+        if not str(store_id or "").strip():
+            raise HTTPException(status_code=400, detail="store_id is required")
+
+        # Validate required fields per row.
+        for col in ["item_name", "category", "price"]:
+            if df[col].isna().any():
+                raise HTTPException(status_code=400, detail=f"Column '{col}' has empty values")
+
+        df["item_name"] = df["item_name"].astype(str).str.strip()
+        df["category"] = df["category"].astype(str).str.strip()
+        if (df["item_name"] == "").any() or (df["category"] == "").any():
+            raise HTTPException(status_code=400, detail="Columns 'item_name' and 'category' cannot be blank")
+
+        df["price_rm"] = pd.to_numeric(df["price"], errors="coerce")
+        if df["price_rm"].isna().any():
+            raise HTTPException(status_code=400, detail="Column 'price' must contain valid numbers")
+
+        # Server-managed fields.
+        df["menu_id"] = [str(uuid4()) for _ in range(len(df))]
+        df["store_id"] = store_id
+        if "restaurant_name" not in df.columns:
+            df["restaurant_name"] = None
+        df["source"] = "Vendor Data"
+        df["is_available"] = True
 
         df = df.where(pd.notnull(df), None)
-        records_to_insert = df.to_dict(orient="records")
+        records_to_insert = df[
+            ["menu_id", "store_id", "restaurant_name", "item_name", "category", "price_rm", "source", "is_available"]
+        ].to_dict(orient="records")
         inserted_count = insert_bulk_menu_items(records_to_insert)
 
         return {"message": "Menu inserted successfully!", "inserted_count": inserted_count}
