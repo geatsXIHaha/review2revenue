@@ -1153,6 +1153,7 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
 
         context_items.append(
             {
+                "store_id": row.get("store_id"),
                 "name": row.get("name"),
                 "food_type": row.get("food_type"),
                 "cuisine_description": row.get("food_type"),

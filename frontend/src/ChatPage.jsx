@@ -86,7 +86,19 @@ function RestaurantCard({ restaurant, userProfile }) {
   const [menuError, setMenuError] = useState('')
 
   async function fetchMenu() {
-    if (!restaurant?.store_id) return
+    // Prefer embedded menu_items if provided by backend
+    if (Array.isArray(restaurant?.menu_items) && restaurant.menu_items.length > 0) {
+      setMenuItems(restaurant.menu_items)
+      setMenuError('')
+      setShowMenu(true)
+      return
+    }
+
+    if (!restaurant?.store_id) {
+      setMenuError('No store_id available for this restaurant')
+      return
+    }
+
     setIsLoadingMenu(true)
     setMenuItems([])
     setMenuError('')
