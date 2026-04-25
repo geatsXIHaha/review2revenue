@@ -8,7 +8,7 @@ This folder contains the React + Vite app for Review2Revenue.
 - Shows the registration flow when needed
 - Displays the diner home page
 - Opens the chat page
-- Renders restaurant cards, menus, and reviews
+- Renders restaurant cards, menus, reviews, and distance
 
 ## Setup
 
