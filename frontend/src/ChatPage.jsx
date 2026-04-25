@@ -91,8 +91,7 @@ function RestaurantCard({ restaurant, userProfile }) {
     setMenuItems([])
     setMenuError('')
     try {
-      const userNameParam = encodeURIComponent(userProfile?.user_name || userProfile?.displayName || '')
-      const response = await fetch(`${API_BASE}/api/menu/by-store-id?store_id=${encodeURIComponent(restaurant.store_id)}&user_name=${userNameParam}`)
+      const response = await fetch(`${API_BASE}/api/menu/by-store-id?store_id=${encodeURIComponent(restaurant.store_id)}`)
       if (!response.ok) {
         const err = await response.json().catch(() => ({}))
         const msg = err.detail || `Failed to fetch menu (status ${response.status})`

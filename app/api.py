@@ -861,15 +861,11 @@ def get_restaurant_by_store_id(store_id: str = Query(min_length=1)) -> Dict:
 
 
 @app.get("/api/menu/by-store-id")
-def get_menu_by_store_id(store_id: str = Query(min_length=1), user_name: Optional[str] = None) -> Dict[str, list]:
-    """Return menu items for a store.
-    Access is granted only when the caller provides user_name equal to 'dinner' (per request).
-    The frontend should pass the logged-in user's display name as the `user_name` query param.
+def get_menu_by_store_id(store_id: str = Query(min_length=1)) -> Dict[str, list]:
+    """Return menu items for a store. Accessible to callers (no user_name gating).
+    Note: In production consider enforcing auth checks (Firebase token / Supabase profile) instead of open access.
     """
     try:
-        # Enforce the specific allowance for username 'dinner'
-        if not user_name or str(user_name).strip().lower() != "dinner":
-            raise HTTPException(status_code=403, detail="Forbidden: user not allowed to view menu")
         items = get_menu_items_by_store_id(store_id)
         return {"menu_items": items}
     except HTTPException:
