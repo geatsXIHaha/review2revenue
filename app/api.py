@@ -1193,7 +1193,14 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
         if payload.user_id:
             upsert_conversation(conversation_id, payload.user_id, payload.role, "Untitled chat")
         save_chat_message(conversation_id, "user", payload.user_id or "user", payload.prompt, payload.restaurant_name)
-        save_chat_message(conversation_id, "assistant", "ai", answer, payload.restaurant_name)
+        save_chat_message(
+            conversation_id,
+            "assistant",
+            "ai",
+            answer,
+            payload.restaurant_name,
+            restaurants=context_items,
+        )
     return AskResponse(answer=answer, conversation_id=conversation_id, source="database", confidence=0.82, restaurants=context_items)
 
 

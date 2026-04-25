@@ -279,7 +279,9 @@ function ChatPage({ userProfile }) {
           id: m.id ? `${convId}-${m.id}` : `${convId}-${index}`,
           role: m.role === 'assistant' ? 'assistant' : 'user',
           message: m.message || '',
-          restaurants: [],
+          restaurants: Array.isArray(m.restaurants)
+            ? m.restaurants
+            : (Array.isArray(m.restaurants_json) ? m.restaurants_json : []),
         }))
 
         if (messages.length > 0) {
