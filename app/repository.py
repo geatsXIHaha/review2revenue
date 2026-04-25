@@ -750,6 +750,29 @@ def insert_bulk_menu_items(records: list) -> int:
         raise Exception(f"Failed to insert records into the database: {e}")
 
 
+def get_menu_items_by_store_id(store_id: str) -> list:
+    """Return menu items for a given store_id as a list of dicts.
+    This is read-only and safe to call without additional permissions checks here.
+    Permission gating is enforced at the API layer.
+    """
+    if not store_id:
+        return []
+    try:
+        with engine.connect() as conn:
+            rows = conn.execute(
+                text("""
+                    SELECT menu_id, store_id, restaurant_name, item_name, category, price_rm, source
+                    FROM menu_items
+                    WHERE store_id = :store_id
+                    ORDER BY COALESCE(category, ''), item_name
+                """), {"store_id": store_id}
+            ).mappings().all()
+        return [dict(r) for r in rows]
+    except Exception as e:
+        print(f"Failed to fetch menu items for store_id={store_id}: {e}")
+        return []
+
+
 def insert_bulk_reviews(records: list) -> int:
     if not records:
         return 0

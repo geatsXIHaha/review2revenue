@@ -432,5 +432,3 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
     </div>
   )
 }
-
-export default Registration

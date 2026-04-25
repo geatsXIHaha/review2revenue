@@ -79,7 +79,32 @@ function getPendingChatTransition() {
 }
 
 // ── Restaurant Card ────────────────────────────────────────────────────────────
-function RestaurantCard({ restaurant }) {
+function RestaurantCard({ restaurant, userProfile }) {
+  const [showMenu, setShowMenu] = useState(false)
+  const [menuItems, setMenuItems] = useState([])
+  const [isLoadingMenu, setIsLoadingMenu] = useState(false)
+
+  async function fetchMenu() {
+    if (!restaurant?.store_id) return
+    setIsLoadingMenu(true)
+    setMenuItems([])
+    try {
+      const response = await fetch(`${API_BASE}/api/menu/by-store-id?store_id=${encodeURIComponent(restaurant.store_id)}&user_name=${encodeURIComponent(userProfile?.user_name || '')}`)
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}))
+        throw new Error(err.detail || 'Failed to fetch menu')
+      }
+      const data = await response.json()
+      setMenuItems(Array.isArray(data.menu_items) ? data.menu_items : [])
+      setShowMenu(true)
+    } catch (err) {
+      console.error('Menu fetch error:', err)
+      // keep UI simple: hide menu on error
+      setShowMenu(false)
+    } finally {
+      setIsLoadingMenu(false)
+    }
+  }
   const {
     name, food_type, avg_rating, address, phone, website,
     distance_km, operating_hours_today, price_description,
@@ -198,7 +223,33 @@ function RestaurantCard({ restaurant }) {
           )}
         </div>
       )}
+
+      {/* Menu button and menu list */}
+      <div style={{ marginTop: '10px' }}>
+        <button onClick={fetchMenu} disabled={isLoadingMenu} style={{
+          background: '#111827', color: '#fff', borderRadius: '8px', padding: '8px 12px', fontWeight: 700, border: 'none'
+        }}>
+          {isLoadingMenu ? 'Loading menu...' : (showMenu ? 'Refresh Menu' : 'View Menu')}
+        </button>
+
+        {showMenu && !isLoadingMenu && menuItems.length === 0 && (
+          <p style={{ marginTop: '8px', fontSize: '0.85rem', color: '#666' }}>No menu items found.</p>
+        )}
+
+        {showMenu && menuItems.length > 0 && (
+          <ul style={{ listStyle: 'none', padding: 0, marginTop: '8px' }}>
+            {menuItems.map((mi, idx) => (
+              <li key={mi.menu_id || idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderTop: idx ? '1px solid #f3f3f3' : 'none' }}>
+                <span style={{ fontWeight: 600 }}>{mi.item_name}</span>
+                <span style={{ color: '#444' }}>RM {Number(mi.price_rm || 0).toFixed(2)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
+  )
+}    </div>
   )
 }
 
@@ -630,7 +681,7 @@ function ChatPage({ userProfile }) {
                     textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '6px',
                   }}>📌 Restaurant Details</p>
                   {msg.restaurants.map((r, i) => (
-                    <RestaurantCard key={r.name || i} restaurant={r} />
+                    <RestaurantCard key={r.name || i} restaurant={r} userProfile={userProfile} />
                   ))}
                 </div>
               )}

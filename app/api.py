@@ -24,6 +24,7 @@ from .repository import (
     get_reviews_by_keywords,
     get_existing_conversation_for_initial_pair,
     insert_bulk_menu_items,
+    get_menu_items_by_store_id,
     list_chat_conversations,
     list_restaurants,
     save_chat_message,
@@ -859,6 +860,24 @@ def get_restaurant_by_store_id(store_id: str = Query(min_length=1)) -> Dict:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/menu/by-store-id")
+def get_menu_by_store_id(store_id: str = Query(min_length=1), user_name: Optional[str] = None) -> Dict[str, list]:
+    """Return menu items for a store.
+    Access is granted only when the caller provides user_name equal to 'dinner' (per request).
+    The frontend should pass the logged-in user's display name as the `user_name` query param.
+    """
+    try:
+        # Enforce the specific allowance for username 'dinner'
+        if not user_name or str(user_name).strip().lower() != "dinner":
+            raise HTTPException(status_code=403, detail="Forbidden: user not allowed to view menu")
+        items = get_menu_items_by_store_id(store_id)
+        return {"menu_items": items}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/reviews/by-store-id")
 def get_reviews_by_store_id(
     store_id: str = Query(min_length=1),
@@ -1127,6 +1146,15 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
         block["distance_km"] = round(distance_km, 2) if distance_km is not None else None
         block["distance_calc_method"] = "backend_haversine" if distance_km is not None else None
 
+        # Attach menu items so the AI can cite menu names and prices for recommended restaurants
+        try:
+            raw_menu = get_menu_items_by_store_id(row.get("store_id")) or []
+            menu_items_list = [
+                {"item_name": m.get("item_name"), "price_rm": m.get("price_rm"), "menu_id": m.get("menu_id")} for m in raw_menu
+            ][:8]
+        except Exception:
+            menu_items_list = []
+
         context_items.append(
             {
                 "name": row.get("name"),
@@ -1139,6 +1167,7 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
                 "recent_reviews": [_review_brief(r) for r in recent_list],
                 "relevant_reviews": [_review_brief(r) for r in relevant_list[:6]],
                 "menu_highlights": _extract_menu_keywords(recent_list + relevant_list, row.get("food_type")),
+                "menu_items": menu_items_list,
                 "price_description": _price_label(row.get("google_price_tier")),
                 "review_insights": _review_insights(all_reviews),
                 "aspect_analysis": aspect_analysis,
