@@ -1,5 +1,8 @@
 # Review2Revenue
 
+Here is our pitching video:
+https://drive.google.com/file/d/1YBURKtzLn4iBQ33OQA-Hxq199MnW2XEM/view?usp=sharing
+
 Review2Revenue is a restaurant recommendation and review analysis system.
 
 Users sign in with Google, complete a one-time role setup, and then use either the diner or vendor experience:
