@@ -461,7 +461,7 @@ function App({ userProfile }) {
 
               <div className="actions">
                 <button type="submit" className="primary" disabled={isLoading || !prompt.trim()}>
-                  {isLoading ? 'Generating...' : 'Generate AI Answer'}
+                  {isLoading ? 'Generating...' : 'Ask AI'}
                 </button>
               </div>
             </>
@@ -518,7 +518,7 @@ function App({ userProfile }) {
                   className="primary"
                   disabled={isLoading || isVendorRestaurantLoading || !userId || !prompt.trim()}
                 >
-                  {isLoading || isVendorRestaurantLoading ? 'Generating...' : 'Generate AI Answer'}
+                  {isLoading || isVendorRestaurantLoading ? 'Generating...' : 'Ask AI'}
                 </button>
                 <button
                   type="button"

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRegistration } from '../hooks/useRegistration'
 import './Registration.css'
 
@@ -16,7 +16,6 @@ import './Registration.css'
  */
 export function Registration({ firebaseUser, onRegistrationComplete }) {
   const registration = useRegistration(firebaseUser)
-  const [searchTimeout, setSearchTimeout] = useState(null)
   const [showBackConfirm, setShowBackConfirm] = useState(false)
 
   // Handle back button with confirmation
@@ -41,26 +40,7 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
 
   // Handle restaurant search with debouncing
   const handleRestaurantSearch = (e) => {
-    const value = e.target.value
-    
-    // Clear previous timeout
-    if (searchTimeout) {
-      clearTimeout(searchTimeout)
-    }
-
-    if (value.trim().length === 0) {
-      registration.searchRestaurants('')
-      setSearchTimeout(null)
-      return
-    }
-
-    // Set new timeout for debounced search (increased from 300ms to 500ms for better performance)
-    const timeout = setTimeout(() => {
-      registration.searchRestaurants(value)
-      setSearchTimeout(null)
-    }, 500)
-
-    setSearchTimeout(timeout)
+    registration.searchRestaurants(e.target.value)
   }
 
   // Handle final registration submission
@@ -70,11 +50,6 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
       onRegistrationComplete()
     }
   }
-
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => clearTimeout(searchTimeout)
-  }, [searchTimeout])
 
   return (
     <div className="registration-container">
@@ -346,7 +321,7 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
                     className="search-input"
                     autoFocus
                   />
-                  {registration.isLoading && <div className="search-spinner">🔍</div>}
+                  {registration.isSearching && <div className="search-spinner">🔍</div>}
                 </div>
 
                 {/* Restaurant Suggestions Dropdown */}
@@ -365,7 +340,7 @@ export function Registration({ firebaseUser, onRegistrationComplete }) {
                 )}
 
                 {/* No Results Message */}
-                {!registration.isLoading &&
+                {!registration.isSearching &&
                   registration.restaurantName.trim().length >= 2 &&
                   registration.restaurantSuggestions.length === 0 && (
                     <div className="no-results">

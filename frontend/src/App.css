@@ -264,7 +264,7 @@ input:focus,
 }
 
 .secondary:hover:not(:disabled) {
-  transform: none;
+  transform: translateY(-2px);
   box-shadow: 0 2px 8px rgba(255, 107, 107, 0.12);
 }
 

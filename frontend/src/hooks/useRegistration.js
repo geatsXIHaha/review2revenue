@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { supabase } from '../supabase'
 
 /**
@@ -23,6 +23,7 @@ import { supabase } from '../supabase'
  * @property {string} restaurantName - Input restaurant name (vendor only)
  * @property {Restaurant | null} matchedRestaurant - Matched restaurant from DB
  * @property {string[]} restaurantSuggestions - Case-insensitive search results
+ * @property {boolean} isSearching - Whether restaurant search is in progress
  * @property {boolean} isLoading - Loading state for async operations
  * @property {string} error - Error message if any
  * @property {boolean} isComplete - Whether registration is complete
@@ -34,6 +35,7 @@ const INITIAL_STATE = {
   restaurantName: '',
   matchedRestaurant: null,
   restaurantSuggestions: [],
+  isSearching: false,
   isLoading: false,
   error: '',
   isComplete: false,
@@ -51,6 +53,9 @@ const INITIAL_STATE = {
  */
 export const useRegistration = (firebaseUser) => {
   const [state, setState] = useState(INITIAL_STATE)
+  const searchDebounceRef = useRef(null)
+  const searchAbortRef = useRef(null)
+  const latestSearchIdRef = useRef(0)
 
   // ============================================
   // HANDLER: Select role (diner or vendor)
@@ -89,10 +94,20 @@ export const useRegistration = (firebaseUser) => {
     // Trim and validate input
     const trimmedTerm = searchTerm.trim()
 
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current)
+      searchDebounceRef.current = null
+    }
+
+    if (searchAbortRef.current) {
+      searchAbortRef.current.abort()
+      searchAbortRef.current = null
+    }
+
     setState((prev) => ({
       ...prev,
       restaurantName: searchTerm,
-      isLoading: trimmedTerm.length > 0,
+      isSearching: false,
       error: '',
     }))
 
@@ -101,7 +116,7 @@ export const useRegistration = (firebaseUser) => {
       setState((prev) => ({
         ...prev,
         restaurantSuggestions: [],
-        isLoading: false,
+        isSearching: false,
       }))
       return
     }
@@ -111,34 +126,70 @@ export const useRegistration = (firebaseUser) => {
       setState((prev) => ({
         ...prev,
         restaurantSuggestions: [],
-        isLoading: false,
+        isSearching: false,
       }))
       return
     }
 
-    try {
-      const { data, error } = await supabase
-        .from('restaurants')
-        .select('store_id, name')
-        .ilike('name', `%${trimmedTerm}%`)
-        .limit(10)
+    const searchId = ++latestSearchIdRef.current
 
-      if (error) {
-        throw new Error(error.message)
+    searchDebounceRef.current = setTimeout(async () => {
+      const controller = new AbortController()
+      searchAbortRef.current = controller
+
+      setState((prev) => ({
+        ...prev,
+        isSearching: true,
+      }))
+
+      try {
+        const { data, error } = await supabase
+          .from('restaurants')
+          .select('store_id, name')
+          .ilike('name', `%${trimmedTerm}%`)
+          .limit(10)
+          .abortSignal(controller.signal)
+
+        if (error) {
+          throw new Error(error.message)
+        }
+
+        if (searchId !== latestSearchIdRef.current) {
+          return
+        }
+
+        setState((prev) => ({
+          ...prev,
+          restaurantSuggestions: data || [],
+          isSearching: false,
+        }))
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return
+        }
+
+        if (searchId !== latestSearchIdRef.current) {
+          return
+        }
+
+        setState((prev) => ({
+          ...prev,
+          error: `Failed to search restaurants: ${error.message}`,
+          restaurantSuggestions: [],
+          isSearching: false,
+        }))
       }
+    }, 250)
+  }, [])
 
-      setState((prev) => ({
-        ...prev,
-        restaurantSuggestions: data || [],
-        isLoading: false,
-      }))
-    } catch (error) {
-      setState((prev) => ({
-        ...prev,
-        error: `Failed to search restaurants: ${error.message}`,
-        restaurantSuggestions: [],
-        isLoading: false,
-      }))
+  useEffect(() => {
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current)
+      }
+      if (searchAbortRef.current) {
+        searchAbortRef.current.abort()
+      }
     }
   }, [])
 
