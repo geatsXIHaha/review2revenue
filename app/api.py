@@ -692,11 +692,15 @@ def _format_ts(value: Any) -> Any:
 
 
 def _review_brief(r: Dict) -> Dict:
+    # Provide both `review_text` and `text` keys for frontend compatibility,
+    # include an `id` if present, and normalized timestamp.
     return {
-        "text": (r.get("review_text") or "").strip(),
+        "id": r.get("id") or r.get("review_id") or None,
+        "review_text": (r.get("review_text") or r.get("text") or "").strip(),
+        "text": (r.get("review_text") or r.get("text") or "").strip(),
         "overall_rating": r.get("overall_rating"),
         "sentiment": r.get("sentiment"),
-        "updated_at": _format_ts(r.get("updated_at")),
+        "updated_at": _format_ts(r.get("updated_at") or r.get("created_at")),
     }
 
 
@@ -909,8 +913,20 @@ def get_reviews_by_store_id(
     limit: int = Query(default=100, ge=1, le=500),
 ) -> Dict[str, List[Dict]]:
     try:
-        reviews = get_recent_reviews(store_id, limit=limit)
-        clean_reviews = [_review_brief(r) for r in reviews if (r.get("review_text") or "").strip()]
+        reviews = get_recent_reviews(store_id, limit=limit) or []
+        # Ensure consistent ordering: newest first by updated_at / created_at
+        def _parse_dt(r):
+            for k in ("updated_at", "created_at"):
+                v = r.get(k)
+                if v:
+                    try:
+                        return _parse_iso_datetime(v) or datetime.min
+                    except Exception:
+                        return datetime.min
+            return datetime.min
+
+        reviews_sorted = sorted(reviews, key=lambda r: _parse_dt(r), reverse=True)
+        clean_reviews = [_review_brief(r) for r in reviews_sorted if (r.get("review_text") or r.get("text") or "").strip()]
         return {"reviews": clean_reviews}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1175,7 +1191,7 @@ def _handle_diner(payload: AskRequest, conversation_id: str, history: List[Dict]
         try:
             raw_menu = get_menu_items_by_store_id(row.get("store_id")) or []
             menu_items_list = [
-                {"item_name": m.get("item_name"), "price_rm": m.get("price_rm"), "menu_id": m.get("menu_id")} for m in raw_menu
+                {"item_name": m.get("item_name"), "price_rm": m.get("price_rm"), "menu_id": m.get("menu_id"),"category": m.get("category")} for m in raw_menu
             ][:8]
         except Exception:
             menu_items_list = []
