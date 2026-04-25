@@ -9,6 +9,10 @@ from fastapi import FastAPI, HTTPException, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 import pandas as pd
 import io
+from pydantic import BaseModel
+from sqlalchemy import text
+from .repository import engine  # add this
+
 
 from .repository import (
     count_reviews_matching_keywords,
@@ -1432,3 +1436,41 @@ def _simple_sentiment_summary(reviews: List[str]) -> Dict[str, float]:
         "neutral_ratio": round(max(total - pos - neg, 0) / total, 3),
         "model_confidence": 0.35,
     }
+class RestaurantCreate(BaseModel):
+    name: str
+    food_type: str
+    google_formatted_address: str
+    google_lat: Optional[float] = 0.0
+    google_lng: Optional[float] = 0.0
+
+@app.post("/api/restaurants/create")
+async def create_restaurant(restaurant: RestaurantCreate):
+    try:
+        new_store_id = str(uuid4())
+
+        with engine.begin() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO restaurants 
+                        (store_id, name, food_type, google_formatted_address, google_lat, google_lng, avg_rating)
+                    VALUES 
+                        (:store_id, :name, :food_type, :google_formatted_address, :google_lat, :google_lng, :avg_rating)
+                """),
+                {
+                    "store_id": new_store_id,
+                    "name": restaurant.name,
+                    "food_type": restaurant.food_type,
+                    "google_formatted_address": restaurant.google_formatted_address,
+                    "google_lat": restaurant.google_lat,
+                    "google_lng": restaurant.google_lng,
+                    "avg_rating": 0.0,
+                }
+            )
+
+        return {
+            "status": "success",
+            "message": "Restaurant created successfully",
+            "store_id": new_store_id,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
