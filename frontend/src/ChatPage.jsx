@@ -277,7 +277,8 @@ function RestaurantCard({ restaurant, userProfile }) {
           <div style={{ marginTop: '8px' }}>
             {(() => {
               const groups = (menuItems || []).reduce((acc, mi) => {
-                const cat = mi.category || 'Uncategorized'
+                const raw = (mi.category || '').toString().trim()
+                const cat = raw.length > 0 ? (raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase()) : 'Uncategorized'
                 if (!acc[cat]) acc[cat] = []
                 acc[cat].push(mi)
                 return acc
